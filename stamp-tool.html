@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stamp tool</title>
+<style>
+  :root {
+    --bg: #F5F4F0;
+    --panel: #ffffff;
+    --border: #E0DED6;
+    --border-strong: #C9C6BA;
+    --ink: #2A2823;
+    --muted: #8A877C;
+    --accent: #3D6BFF;
+    --accent-ring: rgba(61,107,255,0.18);
+    --danger: #E0483E;
+    --hover: #F0EFEA;
+    transition: background 0.3s ease;
+  }
+  body.dark {
+    --bg: #1B1C22;
+    --panel: #26272F;
+    --border: #34363F;
+    --border-strong: #40424D;
+    --ink: #EDEDF0;
+    --muted: #8C8E99;
+    --accent: #7C9CFF;
+    --accent-ring: rgba(124,156,255,0.22);
+    --danger: #FF6B60;
+    --hover: #33343D;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    overflow: hidden;
+    transition: background 0.3s ease, color 0.3s ease;
+  }
+
+  #canvas {
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(circle, var(--border-strong) 1px, transparent 1px);
+    background-size: 24px 24px;
+    cursor: default;
+  }
+
+  #toolbar {
+    position: fixed;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 6px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+    z-index: 10;
+  }
+  .stamp-btn {
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 21px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .stamp-btn:hover { background: var(--hover); }
+  .stamp-btn.active {
+    background: var(--accent-ring);
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+  .divider {
+    width: 1px;
+    height: 26px;
+    background: var(--border);
+    margin: 0 4px;
+  }
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    cursor: pointer;
+    color: var(--ink);
+  }
+  .icon-btn:hover:not(:disabled) { background: var(--hover); }
+  .icon-btn:disabled { color: var(--muted); cursor: default; opacity: 0.5; }
+  .icon-btn svg { width: 18px; height: 18px; }
+  .icon-btn.active {
+    background: var(--accent-ring);
+    box-shadow: inset 0 0 0 2px var(--accent);
+    color: var(--accent);
+  }
+
+  .stamp {
+    position: absolute;
+    font-size: 34px;
+    line-height: 1;
+    user-select: none;
+    cursor: grab;
+    transform: translate(-50%, -50%) rotate(var(--r, 0deg));
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.15));
+    touch-action: none;
+  }
+  .stamp.dragging { cursor: grabbing; z-index: 5; }
+  #canvas.erasing, #canvas.erasing .stamp { cursor: var(--eraser-cur) !important; }
+  .stamp .delete-x {
+    position: absolute;
+    top: -26px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--danger);
+    color: white;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .stamp .delete-x svg { width: 13px; height: 13px; }
+  .stamp.selected .delete-x { display: flex; }
+</style>
+</head>
+<body>
+
+  <div id="toolbar">
+    <button class="stamp-btn" data-stamp="❤️" title="Heart">❤️</button>
+    <button class="stamp-btn" data-stamp="⭐" title="Star">⭐</button>
+    <button class="stamp-btn" data-stamp="✅" title="Check">✅</button>
+    <button class="stamp-btn" data-stamp="🔥" title="Fire">🔥</button>
+    <button class="stamp-btn" data-stamp="👍" title="Thumbs up">👍</button>
+    <button class="stamp-btn" data-stamp="❓" title="Question">❓</button>
+    <div class="divider"></div>
+    <button class="icon-btn" id="undoBtn" title="Undo (Ctrl/Cmd+Z)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+    </button>
+    <button class="icon-btn" id="eraserBtn" title="Eraser — click a sticker to remove it">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H9l-6-6a2 2 0 0 1 0-2.83l8-8a2 2 0 0 1 2.83 0l6.17 6.17a2 2 0 0 1 0 2.83L14 18"/><path d="M6.5 12.5 12 18"/></svg>
+    </button>
+    <button class="icon-btn" id="clearBtn" title="Clear all">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+    </button>
+    <div class="divider"></div>
+    <button class="icon-btn" id="themeBtn" title="Toggle day/night mode">
+      <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+    </button>
+  </div>
+
+  <div id="canvas"></div>
+
+<script>
+(function () {
+  var canvas = document.getElementById('canvas');
+  var undoBtn = document.getElementById('undoBtn');
+  var eraserBtn = document.getElementById('eraserBtn');
+  var clearBtn = document.getElementById('clearBtn');
+  var themeBtn = document.getElementById('themeBtn');
+  var themeIcon = document.getElementById('themeIcon');
+
+  var activeStamp = null;
+  var eraserActive = false;
+  var stamps = [];
+  var selectedEl = null;
+  var idCounter = 0;
+
+  function stampCursor(char) {
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40">' +
+      '<text x="20" y="27" font-size="30" text-anchor="middle">' + char + '</text></svg>';
+    var url = 'data:image/svg+xml,' + encodeURIComponent(svg);
+    return 'url("' + url + '") 20 20, crosshair';
+  }
+
+  var eraserCursorUrl = (function () {
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">' +
+      '<g transform="translate(4,10) rotate(-40 10 8)">' +
+      '<rect x="0" y="0" width="20" height="12" rx="2" fill="#FF8FA3" stroke="#8A2540" stroke-width="1.5"/>' +
+      '<rect x="0" y="0" width="20" height="6" rx="2" fill="#FFC2CE" stroke="#8A2540" stroke-width="1.5"/>' +
+      '</g></svg>';
+    return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '") 6 26, cell';
+  })();
+  document.documentElement.style.setProperty('--eraser-cur', eraserCursorUrl);
+
+  function setArmed(char, btn) {
+    if (activeStamp === char) {
+      disarm();
+      return;
+    }
+    activeStamp = char;
+    eraserActive = false;
+    canvas.classList.remove('erasing');
+    canvas.style.cursor = stampCursor(char);
+    document.querySelectorAll('.stamp-btn').forEach(function (b) { b.classList.remove('active'); });
+    eraserBtn.classList.remove('active');
+    btn.classList.add('active');
+    deselect();
+  }
+
+  function setEraser() {
+    if (eraserActive) {
+      disarm();
+      return;
+    }
+    activeStamp = null;
+    eraserActive = true;
+    canvas.classList.add('erasing');
+    document.querySelectorAll('.stamp-btn').forEach(function (b) { b.classList.remove('active'); });
+    eraserBtn.classList.add('active');
+    deselect();
+  }
+
+  function disarm() {
+    activeStamp = null;
+    eraserActive = false;
+    canvas.style.cursor = 'default';
+    canvas.classList.remove('erasing');
+    document.querySelectorAll('.stamp-btn').forEach(function (b) { b.classList.remove('active'); });
+    eraserBtn.classList.remove('active');
+  }
+
+  document.querySelectorAll('.stamp-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      setArmed(btn.getAttribute('data-stamp'), btn);
+    });
+  });
+
+  eraserBtn.addEventListener('click', setEraser);
+
+  function deselect() {
+    if (selectedEl) selectedEl.classList.remove('selected');
+    selectedEl = null;
+  }
+
+  function select(el) {
+    deselect();
+    selectedEl = el;
+    el.classList.add('selected');
+  }
+
+  function placeStamp(x, y) {
+    deselect();
+    var id = 'stamp-' + (idCounter++);
+    var rotation = (Math.random() * 24 - 12).toFixed(1);
+    var record = { id: id, char: activeStamp, x: x, y: y, r: rotation };
+    stamps.push(record);
+    renderStamp(record);
+    undoBtn.disabled = false;
+  }
+
+  function renderStamp(record) {
+    var el = document.createElement('div');
+    el.className = 'stamp';
+    el.id = record.id;
+    el.style.left = record.x + 'px';
+    el.style.top = record.y + 'px';
+    el.style.setProperty('--r', record.r + 'deg');
+    el.textContent = record.char;
+
+    var del = document.createElement('div');
+    del.className = 'delete-x';
+    del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>';
+    del.addEventListener('click', function (e) {
+      e.stopPropagation();
+      removeStamp(record.id);
+    });
+    el.appendChild(del);
+
+    canvas.appendChild(el);
+    attachDrag(el, record);
+  }
+
+  function removeStamp(id) {
+    stamps = stamps.filter(function (s) { return s.id !== id; });
+    var el = document.getElementById(id);
+    if (el) el.remove();
+    if (selectedEl && selectedEl.id === id) selectedEl = null;
+    undoBtn.disabled = stamps.length === 0;
+  }
+
+  function attachDrag(el, record) {
+    var dragging = false;
+    var offsetX = 0, offsetY = 0;
+
+    el.addEventListener('click', function (e) {
+      e.stopPropagation();
+    });
+
+    el.addEventListener('pointerdown', function (e) {
+      if (e.target.closest('.delete-x')) return;
+      if (eraserActive) return;
+      e.stopPropagation();
+      select(el);
+      dragging = true;
+      el.classList.add('dragging');
+      el.setPointerCapture(e.pointerId);
+      var rect = canvas.getBoundingClientRect();
+      offsetX = (e.clientX - rect.left) - record.x;
+      offsetY = (e.clientY - rect.top) - record.y;
+    });
+
+    el.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      var rect = canvas.getBoundingClientRect();
+      record.x = (e.clientX - rect.left) - offsetX;
+      record.y = (e.clientY - rect.top) - offsetY;
+      el.style.left = record.x + 'px';
+      el.style.top = record.y + 'px';
+    });
+
+    function endDrag() {
+      if (!dragging) return;
+      dragging = false;
+      el.classList.remove('dragging');
+    }
+    el.addEventListener('pointerup', endDrag);
+    el.addEventListener('pointercancel', endDrag);
+  }
+
+  canvas.addEventListener('click', function (e) {
+    if (!activeStamp) {
+      deselect();
+      return;
+    }
+    var rect = canvas.getBoundingClientRect();
+    var x = e.clientX - rect.left;
+    var y = e.clientY - rect.top;
+    placeStamp(x, y);
+  });
+
+  var erasingDrag = false;
+
+  function eraseAtPoint(clientX, clientY) {
+    var el = document.elementFromPoint(clientX, clientY);
+    var stampEl = el && el.closest ? el.closest('.stamp') : null;
+    if (stampEl) removeStamp(stampEl.id);
+  }
+
+  canvas.addEventListener('pointerdown', function (e) {
+    if (!eraserActive) return;
+    erasingDrag = true;
+    eraseAtPoint(e.clientX, e.clientY);
+  });
+
+  document.addEventListener('pointermove', function (e) {
+    if (!erasingDrag) return;
+    eraseAtPoint(e.clientX, e.clientY);
+  });
+
+  document.addEventListener('pointerup', function () {
+    erasingDrag = false;
+  });
+
+  undoBtn.addEventListener('click', function () {
+    if (!stamps.length) return;
+    var last = stamps[stamps.length - 1];
+    removeStamp(last.id);
+  });
+
+  clearBtn.addEventListener('click', function () {
+    stamps.forEach(function (s) {
+      var el = document.getElementById(s.id);
+      if (el) el.remove();
+    });
+    stamps = [];
+    selectedEl = null;
+    undoBtn.disabled = true;
+  });
+
+  document.addEventListener('keydown', function (e) {
+    var mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      undoBtn.click();
+      return;
+    }
+    if (e.key === 'Escape') {
+      disarm();
+      deselect();
+      return;
+    }
+    if ((e.key === 'Backspace' || e.key === 'Delete') && selectedEl) {
+      removeStamp(selectedEl.id);
+    }
+  });
+
+  var moonPath = '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z"/>';
+  var sunPath = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>';
+
+  function setTheme(dark) {
+    document.body.classList.toggle('dark', dark);
+    themeIcon.innerHTML = dark ? moonPath : sunPath;
+    themeBtn.title = dark ? 'Switch to day mode' : 'Switch to night mode';
+    if (activeStamp) canvas.style.cursor = stampCursor(activeStamp);
+  }
+
+  var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  setTheme(prefersDark);
+
+  themeBtn.addEventListener('click', function () {
+    setTheme(!document.body.classList.contains('dark'));
+  });
+
+  undoBtn.disabled = true;
+})();
+</script>
+</body>
+</html>
