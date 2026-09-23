@@ -740,6 +740,70 @@
     return `rgb(${cl((n >> 16) & 255)},${cl((n >> 8) & 255)},${cl(n & 255)})`;
   }
 
+  // --- shore tiles ---
+  // Land cells that touch water are drawn as a shaped polygon instead of a
+  // full quad, picked by which of their four sides border water. Shapes are
+  // authored on a 40x40 tile (from the shore mock) with the sides that face
+  // water listed; every rotation and mirror is generated from them, so each
+  // water mask gets a few variants to pick from.
+  const N = 1, E = 2, S = 4, W = 8;
+  const SHORE_TEMPLATES = [
+    // one side: a bite out of the water edge
+    { water: N, pts: [[16.9,11.5],[25.6,1.8],[40,0],[40,40],[0,40],[0,0],[16.2,2.8]] },
+    { water: N, pts: [[16.9,11.5],[30,10],[40,0],[40,40],[0,40],[0,0],[9.5,14]] },
+    { water: S, pts: [[20,34.5],[10,34.5],[0,40],[0,0],[40,0],[40,40],[23.8,37.2]] },
+    { water: E, pts: [[35,24],[38.2,25.6],[40,40],[0,40],[0,0],[40,0],[37.2,16.2]] },
+    // two adjacent sides: a diagonal corner
+    { water: N | W, pts: [[17,16.5],[40,0],[40,40],[0,40]] },
+    { water: N | W, pts: [[18,30],[36,16],[40,0],[40,40],[0,40]] },
+    { water: N | E, pts: [[15.5,24],[19,16],[28.5,18],[40,40],[0,40],[0,0],[13.5,13]] },
+    // two opposite sides: a pinched strip
+    { water: N | S, pts: [[0,9],[9,12.5],[20,10],[31,12],[40,8],[40,31],[29,28.5],[18,30.5],[8,28],[0,32]] },
+    // three sides: a peninsula reaching out from the land side
+    { water: N | W | S, pts: [[4.7,15.05],[15.4,7.2],[28.75,5.45],[27.85,9.8],[40,0],[40,40],[30.25,27.85],[12,32.15]] },
+    // four sides: a small islet
+    { water: N | E | S | W, pts: [[17.5,23.8],[7.2,24.6],[5.4,21.5],[11.2,11],[22.2,4.2],[28.6,7],[28,13.3]] },
+  ];
+
+  // water mask -> list of unit-square polygons ([[u, v], ...])
+  const SHORE_SHAPES = (() => {
+    const byMask = Array.from({ length: 16 }, () => []);
+    // quarter turn clockwise (y points down): N->E->S->W
+    const rotPt = ([u, v]) => [1 - v, u];
+    const rotMask = (m) => ((m << 1) | (m >> 3)) & 15;
+    // left-right mirror swaps E and W
+    const mirPt = ([u, v]) => [1 - u, v];
+    const mirMask = (m) => (m & (N | S)) | (m & E ? W : 0) | (m & W ? E : 0);
+    for (const t of SHORE_TEMPLATES) {
+      const unit = t.pts.map(([x, y]) => [x / 40, y / 40]);
+      for (const [pts0, m0] of [[unit, t.water], [unit.map(mirPt), mirMask(t.water)]]) {
+        let pts = pts0, m = m0;
+        for (let r = 0; r < 4; r++) {
+          byMask[m].push(pts);
+          pts = pts.map(rotPt);
+          m = rotMask(m);
+        }
+      }
+    }
+    return byMask;
+  })();
+
+  // bilinear map from the unit square onto a (possibly jittered) cell quad,
+  // so straight tile edges land exactly on the shared cell edges
+  function quadPoint(p00, p10, p11, p01, u, v) {
+    const a = (1 - u) * (1 - v), b = u * (1 - v), c = u * v, d = (1 - u) * v;
+    return {
+      x: a * p00.x + b * p10.x + c * p11.x + d * p01.x,
+      y: a * p00.y + b * p10.y + c * p11.y + d * p01.y,
+    };
+  }
+
+  function cellHash(i, j, seed) {
+    let h = Math.imul(i, 374761393) ^ Math.imul(j, 668265263) ^ seed;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return (h ^ (h >>> 16)) >>> 0;
+  }
+
   function generateGrid(width, height, cellSize, jitter, noiseX, noiseY) {
     const margin = cellSize * 1.5;
     const cols = Math.ceil((width + margin * 2) / cellSize);
@@ -808,27 +872,52 @@
     const { points, cols, rows } = generateGrid(w, h, s.cell, s.jitter, perlinJX, perlinJY);
     const path = terrainType === 'valley' ? makeValleyPath(cols, rows, seed) : null;
 
-    // fill each cell once, sampled at its unjittered center; water and snow
-    // cells are also collected (in map coordinates) so the builder can keep
-    // its forest off them
+    // sample every cell's band once, at its unjittered center
+    const cellBands = [];
+    for (let j = 0; j < rows; j++) {
+      const row = [];
+      for (let i = 0; i < cols; i++) {
+        const rawH = ridged((i + 0.5) * s.scale, (j + 0.5) * s.scale);
+        row.push(bandFor(shapeHeight(rawH, i, j, cols, rows, terrainType, path), bands));
+      }
+      cellBands.push(row);
+    }
+    // cells past the grid edge count as land, so the border isn't all shore
+    const isWater = (i, j) => j >= 0 && j < rows && i >= 0 && i < cols && cellBands[j][i].name === 'Water';
+
+    // the base layer is all water; land is painted on top of it
+    ctx.fillStyle = bands[0].color;
+    ctx.fillRect(0, 0, w, h);
+
+    // water and snow cells are also collected (in map coordinates) so the
+    // builder can keep its forest off them
     const noTrees = [];
     const r1 = (v) => Math.round(v * 10) / 10;
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
-        const rawH = ridged((i + 0.5) * s.scale, (j + 0.5) * s.scale);
-        const band = bandFor(shapeHeight(rawH, i, j, cols, rows, terrainType, path), bands);
-        ctx.fillStyle = shade(band.color, perlinJX(i * 3.1 + 40, j * 3.1 + 40) * 0.05);
-
+        const band = cellBands[j][i];
         const p00 = points[j][i], p10 = points[j][i + 1];
         const p11 = points[j + 1][i + 1], p01 = points[j + 1][i];
         if (band.name === 'Water' || band.name === 'Snow') {
           noTrees.push('M' + [p00, p10, p11, p01].map((p) => r1(p.x + ext.x) + ' ' + r1(p.y + ext.y)).join('L') + 'Z');
         }
+        if (band.name === 'Water') continue;
+
+        const waterMask = (isWater(i, j - 1) ? N : 0) | (isWater(i + 1, j) ? E : 0)
+          | (isWater(i, j + 1) ? S : 0) | (isWater(i - 1, j) ? W : 0);
+        let corners;
+        if (waterMask) {
+          const variants = SHORE_SHAPES[waterMask];
+          const shape = variants[cellHash(i, j, seed) % variants.length];
+          corners = shape.map(([u, v]) => quadPoint(p00, p10, p11, p01, u, v));
+        } else {
+          corners = [p00, p10, p11, p01];
+        }
+
+        ctx.fillStyle = shade(band.color, perlinJX(i * 3.1 + 40, j * 3.1 + 40) * 0.05);
         ctx.beginPath();
-        ctx.moveTo(p00.x, p00.y);
-        ctx.lineTo(p10.x, p10.y);
-        ctx.lineTo(p11.x, p11.y);
-        ctx.lineTo(p01.x, p01.y);
+        ctx.moveTo(corners[0].x, corners[0].y);
+        for (let k = 1; k < corners.length; k++) ctx.lineTo(corners[k].x, corners[k].y);
         ctx.closePath();
         ctx.fill();
       }
