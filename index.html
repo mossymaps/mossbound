@@ -1847,8 +1847,8 @@
       if (!panning) return;
       var ctm = svg.getScreenCTM();
       var scale = (ctm && ctm.a) ? ctm.a : 1; // screen px per svg unit
-      state.panX = startPan.x - (e.clientX - startClient.x) / scale;
-      state.panY = startPan.y - (e.clientY - startClient.y) / scale;
+      state.panX = startPan.x + (e.clientX - startClient.x) / scale;
+      state.panY = startPan.y + (e.clientY - startClient.y) / scale;
       applyZoom();
     });
     function stopPanning(e){
