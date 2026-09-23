@@ -741,10 +741,11 @@
   }
 
   // --- shore tiles ---
-  // Land cells that touch water are drawn as a shaped polygon instead of a
-  // full quad, picked by which of their four sides border water. Shapes are
-  // authored on a 40x40 tile (from the shore mock) with the sides that face
-  // water listed; every rotation and mirror is generated from them, so each
+  // A cell that borders a lower band (land next to water, fields next to
+  // shore, ...) is drawn as a shaped polygon instead of a full quad, picked
+  // by which of its four sides face lower ground. Shapes are authored on a
+  // 40x40 tile (from the shore mock) with the sides that face lower ground
+  // listed; every rotation and mirror is generated from them, so each
   // water mask gets a few variants to pick from.
   const N = 1, E = 2, S = 4, W = 8;
   const SHORE_TEMPLATES = [
@@ -872,20 +873,25 @@
     const { points, cols, rows } = generateGrid(w, h, s.cell, s.jitter, perlinJX, perlinJY);
     const path = terrainType === 'valley' ? makeValleyPath(cols, rows, seed) : null;
 
-    // sample every cell's band once, at its unjittered center
-    const cellBands = [];
+    // sample every cell's band index once, at its unjittered center
+    const levels = [];
     for (let j = 0; j < rows; j++) {
       const row = [];
       for (let i = 0; i < cols; i++) {
         const rawH = ridged((i + 0.5) * s.scale, (j + 0.5) * s.scale);
-        row.push(bandFor(shapeHeight(rawH, i, j, cols, rows, terrainType, path), bands));
+        row.push(bands.indexOf(bandFor(shapeHeight(rawH, i, j, cols, rows, terrainType, path), bands)));
       }
-      cellBands.push(row);
+      levels.push(row);
     }
-    // cells past the grid edge count as land, so the border isn't all shore
-    const isWater = (i, j) => j >= 0 && j < rows && i >= 0 && i < cols && cellBands[j][i].name === 'Water';
+    // sides of cell (i, j) whose neighbor sits below `level`; cells past the
+    // grid edge never count as lower, so the border doesn't get a coastline
+    const lowerMask = (i, j, level) => {
+      const below = (a, b) => b >= 0 && b < rows && a >= 0 && a < cols && levels[b][a] < level;
+      return (below(i, j - 1) ? N : 0) | (below(i + 1, j) ? E : 0)
+        | (below(i, j + 1) ? S : 0) | (below(i - 1, j) ? W : 0);
+    };
 
-    // the base layer is all water; land is painted on top of it
+    // the base layer is all water; each higher band is stacked on top of it
     ctx.fillStyle = bands[0].color;
     ctx.fillRect(0, 0, w, h);
 
@@ -895,31 +901,42 @@
     const r1 = (v) => Math.round(v * 10) / 10;
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
-        const band = cellBands[j][i];
+        const top = levels[j][i];
         const p00 = points[j][i], p10 = points[j][i + 1];
         const p11 = points[j + 1][i + 1], p01 = points[j + 1][i];
-        if (band.name === 'Water' || band.name === 'Snow') {
+        const name = bands[top].name;
+        if (name === 'Water' || name === 'Snow') {
           noTrees.push('M' + [p00, p10, p11, p01].map((p) => r1(p.x + ext.x) + ' ' + r1(p.y + ext.y)).join('L') + 'Z');
         }
-        if (band.name === 'Water') continue;
+        if (top === 0) continue;
 
-        const waterMask = (isWater(i, j - 1) ? N : 0) | (isWater(i + 1, j) ? E : 0)
-          | (isWater(i, j + 1) ? S : 0) | (isWater(i - 1, j) ? W : 0);
-        let corners;
-        if (waterMask) {
-          const variants = SHORE_SHAPES[waterMask];
-          const shape = variants[cellHash(i, j, seed) % variants.length];
-          corners = shape.map(([u, v]) => quadPoint(p00, p10, p11, p01, u, v));
-        } else {
-          corners = [p00, p10, p11, p01];
+        // Paint this cell once per band from Shore up to its own, each layer
+        // shaped by the neighbors lying below it, so an edge bitten out of
+        // a Hills cell shows the Fields (or lower) band underneath. Masks
+        // only grow with the level, so every layer below the highest
+        // unshaped one is fully hidden and can be skipped.
+        let from = 1;
+        for (let level = top; level >= 1; level--) {
+          if (!lowerMask(i, j, level)) { from = level; break; }
         }
-
-        ctx.fillStyle = shade(band.color, perlinJX(i * 3.1 + 40, j * 3.1 + 40) * 0.05);
-        ctx.beginPath();
-        ctx.moveTo(corners[0].x, corners[0].y);
-        for (let k = 1; k < corners.length; k++) ctx.lineTo(corners[k].x, corners[k].y);
-        ctx.closePath();
-        ctx.fill();
+        const pick = cellHash(i, j, seed);
+        const tint = perlinJX(i * 3.1 + 40, j * 3.1 + 40) * 0.05;
+        for (let level = from; level <= top; level++) {
+          const mask = lowerMask(i, j, level);
+          let corners;
+          if (mask) {
+            const variants = SHORE_SHAPES[mask];
+            corners = variants[pick % variants.length].map(([u, v]) => quadPoint(p00, p10, p11, p01, u, v));
+          } else {
+            corners = [p00, p10, p11, p01];
+          }
+          ctx.fillStyle = shade(bands[level].color, tint);
+          ctx.beginPath();
+          ctx.moveTo(corners[0].x, corners[0].y);
+          for (let k = 1; k < corners.length; k++) ctx.lineTo(corners[k].x, corners[k].y);
+          ctx.closePath();
+          ctx.fill();
+        }
       }
     }
 
