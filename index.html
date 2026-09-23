@@ -16,9 +16,8 @@
     --drawer-muted:#B8B39C;
     --drawer-accent:#A9C77E;
 
-    /* day/night sequence from the toggle design: day, dusk teal, twilight purple, night */
+    /* day/night sequence from the toggle design: day, twilight purple, night */
     --tint-day:rgba(0,0,0,0);
-    --tint-dusk:rgba(64,176,206,.26);
     --tint-twilight:rgba(96,62,140,.46);
     --tint-night:rgba(16,24,38,.64);
     --tog-dur:1.25s;
@@ -55,8 +54,7 @@
   }
   @keyframes seqTint{
     0%{   background-color:var(--tint-day); }
-    33%{  background-color:var(--tint-dusk); }
-    66%{  background-color:var(--tint-twilight); }
+    50%{  background-color:var(--tint-twilight); }
     100%{ background-color:var(--tint-night); }
   }
   #tintRect.anim-fwd{ animation:seqTint var(--tog-dur) ease-in-out both; }
@@ -97,7 +95,7 @@
   .zoom-pill button:hover{ background:rgba(255,255,255,.2); }
   .zoom-pill .zoom-div{ width:1px; align-self:stretch; background:var(--chrome-border); }
 
-  /* day/night switch: track and knob step through the same four stages as the tint */
+  /* day/night switch: track and knob step through the same three stages as the tint */
   .tswitch{
     position:relative; width:3.6rem; height:2.05rem; border-radius:999px;
     background:#5E9C84; border:none; padding:0; cursor:pointer;
@@ -105,8 +103,7 @@
   .tswitch:focus-visible{ outline:2px solid #fff; outline-offset:2px; }
   @keyframes tSeqTrack{
     0%{   background:#5E9C84; }
-    33%{  background:#3D7C96; }
-    66%{  background:#6E3A5C; }
+    50%{  background:#6E3A5C; }
     100%{ background:#1B1523; }
   }
   .tswitch.anim-fwd{ animation:tSeqTrack var(--tog-dur) ease-in-out both; }
@@ -119,8 +116,7 @@
   }
   @keyframes tSeqKnob{
     0%{   transform:translateX(0);      background:#C9DC9E; }
-    33%{  transform:translateX(.5rem);  background:#E3B85C; }
-    66%{  transform:translateX(1.05rem);background:#E2605A; }
+    50%{  transform:translateX(.78rem); background:#E2605A; }
     100%{ transform:translateX(1.56rem);background:#CDEAB4; }
   }
   .tknob.anim-fwd{ animation:tSeqKnob var(--tog-dur) ease-in-out both; }
