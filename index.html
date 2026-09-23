@@ -2,588 +2,510 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stamp tool</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Mossbound</title>
 <style>
-  :root {
-    --bg: #F5F4F0;
-    --panel: #ffffff;
-    --border: #E0DED6;
-    --border-strong: #C9C6BA;
-    --ink: #2A2823;
-    --muted: #8A877C;
-    --accent: #3D6BFF;
-    --accent-ring: rgba(61,107,255,0.18);
-    --danger: #E0483E;
-    --hover: #F0EFEA;
-    transition: background 0.3s ease;
+  :root{
+    --chrome-bg:rgba(240,244,214,.30);
+    --chrome-bg-strong:rgba(240,244,214,.48);
+    --chrome-border:rgba(255,255,255,.30);
+    --chrome-fg:#4D3F36;
+    --drawer-bg:rgba(30,34,24,.86);
+    --drawer-border:rgba(255,255,255,.12);
+    --drawer-fg:#F2EAD9;
+    --drawer-muted:#B8B39C;
+    --drawer-accent:#A9C77E;
+
+    /* day/night sequence from the toggle design: day, dusk teal, twilight purple, night */
+    --tint-day:rgba(0,0,0,0);
+    --tint-dusk:rgba(64,176,206,.26);
+    --tint-twilight:rgba(96,62,140,.46);
+    --tint-night:rgba(16,24,38,.64);
+    --tog-dur:1.25s;
   }
-  body.dark {
-    --bg: #1B1C22;
-    --panel: #26272F;
-    --border: #34363F;
-    --border-strong: #40424D;
-    --ink: #EDEDF0;
-    --muted: #8C8E99;
-    --accent: #7C9CFF;
-    --accent-ring: rgba(124,156,255,0.22);
-    --danger: #FF6B60;
-    --hover: #33343D;
-  }
-  * { box-sizing: border-box; }
-  html, body {
-    margin: 0; height: 100%;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: var(--bg);
-    color: var(--ink);
-    overflow: hidden;
-    transition: background 0.3s ease, color 0.3s ease;
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    overflow:hidden;
+    background:#9aab68;
+    font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
+    -webkit-tap-highlight-color:transparent;
   }
 
-  #terrain {
-    position: fixed;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    display: block;
-    pointer-events: none;
+  /* ---------- terrain background (under the builder) ---------- */
+  #ground{ position:fixed; pointer-events:none; }
+  #terrain{ position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .cloud{
+    position:absolute; height:34px; border-radius:999px;
+    background:rgba(255,255,255,.16);
+    animation:drift ease-in-out infinite alternate;
+  }
+  @keyframes drift{ from{ transform:translateX(-30vw); } to{ transform:translateX(30vw); } }
+
+  #app{ position:fixed; inset:0; }
+  #map{ width:100%; height:100%; display:block; touch-action:none; cursor:default; }
+  #map.mode-active{ cursor:crosshair; }
+  .feature{ cursor:grab; }
+  .feature:active{ cursor:grabbing; }
+
+  #tintRect{
+    position:fixed; inset:0; pointer-events:none;
+    background-color:var(--tint-day);
+  }
+  @keyframes seqTint{
+    0%{   background-color:var(--tint-day); }
+    33%{  background-color:var(--tint-dusk); }
+    66%{  background-color:var(--tint-twilight); }
+    100%{ background-color:var(--tint-night); }
+  }
+  #tintRect.anim-fwd{ animation:seqTint var(--tog-dur) ease-in-out both; }
+  #tintRect.anim-rev{ animation:seqTint var(--tog-dur) ease-in-out both reverse; }
+  #tintRect.state-on{ background-color:var(--tint-night); }
+
+  /* ---------- floating chrome ---------- */
+  .chrome-btn{
+    display:flex; align-items:center; justify-content:center;
+    width:2.6rem; height:2.6rem;
+    border-radius:999px;
+    background:var(--chrome-bg);
+    border:1px solid var(--chrome-border);
+    backdrop-filter:blur(6px);
+    color:var(--chrome-fg);
+    cursor:pointer;
+    transition:background .15s ease, transform .15s ease;
+  }
+  .chrome-btn:hover{ background:var(--chrome-bg-strong); }
+  .chrome-btn:active{ transform:scale(.93); }
+  .chrome-btn svg{ width:1.15rem; height:1.15rem; }
+
+  #hamburger{ position:absolute; top:calc(1rem + env(safe-area-inset-top,0px)); left:1rem; z-index:5; }
+
+  #topRight{
+    position:absolute; top:calc(1rem + env(safe-area-inset-top,0px)); right:1rem; z-index:5;
+    display:flex; align-items:center; gap:.55rem;
+  }
+  .zoom-pill{
+    display:flex; align-items:center;
+    background:var(--chrome-bg); border:1px solid var(--chrome-border);
+    backdrop-filter:blur(6px); border-radius:999px; overflow:hidden;
+  }
+  .zoom-pill button{
+    width:2.3rem; height:2.6rem; border:none; background:transparent; color:var(--chrome-fg);
+    font-size:1.15rem; cursor:pointer; line-height:1; transition:background .15s ease;
+  }
+  .zoom-pill button:hover{ background:rgba(255,255,255,.2); }
+  .zoom-pill .zoom-div{ width:1px; align-self:stretch; background:var(--chrome-border); }
+
+  /* day/night switch: track and knob step through the same four stages as the tint */
+  .tswitch{
+    position:relative; width:3.6rem; height:2.05rem; border-radius:999px;
+    background:#5E9C84; border:none; padding:0; cursor:pointer;
+  }
+  .tswitch:focus-visible{ outline:2px solid #fff; outline-offset:2px; }
+  @keyframes tSeqTrack{
+    0%{   background:#5E9C84; }
+    33%{  background:#3D7C96; }
+    66%{  background:#6E3A5C; }
+    100%{ background:#1B1523; }
+  }
+  .tswitch.anim-fwd{ animation:tSeqTrack var(--tog-dur) ease-in-out both; }
+  .tswitch.anim-rev{ animation:tSeqTrack var(--tog-dur) ease-in-out both reverse; }
+  .tswitch.state-on{ background:#1B1523; }
+  .tknob{
+    position:absolute; top:.24rem; left:.24rem; width:1.57rem; height:1.57rem;
+    border-radius:50%; background:#C9DC9E; transform:translateX(0);
+    box-shadow:0 1px 2px rgba(0,0,0,.3);
+  }
+  @keyframes tSeqKnob{
+    0%{   transform:translateX(0);      background:#C9DC9E; }
+    33%{  transform:translateX(.5rem);  background:#E3B85C; }
+    66%{  transform:translateX(1.05rem);background:#E2605A; }
+    100%{ transform:translateX(1.56rem);background:#CDEAB4; }
+  }
+  .tknob.anim-fwd{ animation:tSeqKnob var(--tog-dur) ease-in-out both; }
+  .tknob.anim-rev{ animation:tSeqKnob var(--tog-dur) ease-in-out both reverse; }
+  .tknob.state-on{ transform:translateX(1.56rem); background:#CDEAB4; }
+  @keyframes tKnobBounceOn{
+    0%{  transform:translateX(1.56rem);  animation-timing-function:cubic-bezier(.22,.61,.36,1); }
+    55%{ transform:translateX(1.62rem);  animation-timing-function:cubic-bezier(.5,0,.5,1); }
+    100%{transform:translateX(1.56rem); }
+  }
+  @keyframes tKnobBounceOff{
+    0%{  transform:translateX(0);        animation-timing-function:cubic-bezier(.22,.61,.36,1); }
+    55%{ transform:translateX(-.06rem);  animation-timing-function:cubic-bezier(.5,0,.5,1); }
+    100%{transform:translateX(0); }
+  }
+  .tknob.bounce-on{ animation:tKnobBounceOn .32s; }
+  .tknob.bounce-off{ animation:tKnobBounceOff .32s; }
+
+  @media (prefers-reduced-motion: reduce){
+    .tknob.anim-fwd,.tknob.anim-rev,.tknob.bounce-on,.tknob.bounce-off,
+    .tswitch.anim-fwd,.tswitch.anim-rev,
+    #tintRect.anim-fwd,#tintRect.anim-rev,.cloud{ animation:none; }
   }
 
-  #canvas {
-    position: absolute;
-    inset: 0;
-    cursor: default;
+  /* ---------- bottom toolbar ---------- */
+  #toolbar{
+    position:absolute; left:50%; bottom:calc(1rem + env(safe-area-inset-bottom,0px));
+    transform:translateX(-50%); z-index:5;
+    display:flex; align-items:center; gap:.35rem;
+    background:var(--chrome-bg); border:1px solid var(--chrome-border);
+    backdrop-filter:blur(8px); border-radius:999px; padding:.45rem .7rem;
+    max-width:calc(100vw - 1.5rem);
+  }
+  .tool-btn{
+    display:flex; align-items:center; justify-content:center;
+    width:2.6rem; height:2.6rem; border-radius:999px; border:none; background:transparent;
+    color:var(--chrome-fg); opacity:.8; cursor:pointer; transform:translateY(0);
+    transition:opacity .2s ease-in-out, transform .2s ease-in-out, background .2s ease-in-out;
+    flex:0 0 auto;
+  }
+  .tool-btn svg{ width:1.3rem; height:1.3rem; pointer-events:none; }
+  .tool-btn svg.tool-icon{ width:1.9rem; height:1.9rem; overflow:visible; }
+  .tool-btn:hover, .tool-btn.selected{ opacity:1; transform:translateY(-4px); }
+  .tool-btn.selected{ background:rgba(255,255,255,.28); }
+  .tool-btn:disabled{ opacity:.32; cursor:default; transform:none; }
+  .tool-sep{ width:1px; height:1.7rem; background:var(--chrome-border); margin:0 .2rem; flex:0 0 auto; }
+  @media (max-width: 480px){
+    #toolbar{ gap:.1rem; padding:.35rem .45rem; }
+    .tool-btn{ width:2.2rem; height:2.2rem; }
+    .tool-btn svg.tool-icon{ width:1.6rem; height:1.6rem; }
+    .tool-sep{ margin:0 .05rem; }
   }
 
-  #toolbar {
-    position: fixed;
-    bottom: 18px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 6px;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.08);
-    z-index: 10;
+  /* ---------- hamburger menu panel ---------- */
+  #menuPanel{
+    position:absolute; top:0; left:0; height:100%; width:min(20rem, 86vw);
+    background:var(--drawer-bg); backdrop-filter:blur(10px);
+    border-right:1px solid var(--drawer-border); color:var(--drawer-fg); z-index:10;
+    padding:calc(1.2rem + env(safe-area-inset-top,0px)) 1.1rem 1.3rem;
+    transform:translateX(-100%); transition:transform .28s cubic-bezier(.32,.72,.35,1);
+    overflow-y:auto;
   }
-  .stamp-btn {
-    width: 42px;
-    height: 42px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 21px;
-    border: none;
-    border-radius: 9px;
-    background: transparent;
-    cursor: pointer;
-    line-height: 1;
+  #menuPanel.open{ transform:translateX(0); }
+  #menuScrim{
+    position:absolute; inset:0; background:rgba(0,0,0,.35);
+    opacity:0; pointer-events:none; transition:opacity .25s ease; z-index:9;
   }
-  .stamp-btn:hover { background: var(--hover); }
-  .stamp-btn.active {
-    background: var(--accent-ring);
-    box-shadow: inset 0 0 0 2px var(--accent);
+  #menuScrim.open{ opacity:1; pointer-events:auto; }
+  #menuPanel h2{ margin:0 0 1rem; padding-left:.5rem; font-size:1.05rem; font-weight:600; letter-spacing:.01em; }
+  .menu-item{
+    display:block; width:100%; text-align:left; background:transparent; border:none;
+    color:var(--drawer-fg); font:inherit; font-size:.92rem; padding:.7rem .5rem; border-radius:.6rem;
+    cursor:pointer; transition:background .15s ease;
   }
-  .divider {
-    width: 1px;
-    height: 26px;
-    background: var(--border);
-    margin: 0 4px;
-  }
-  .icon-btn {
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    border-radius: 9px;
-    background: transparent;
-    cursor: pointer;
-    color: var(--ink);
-  }
-  .icon-btn:hover:not(:disabled) { background: var(--hover); }
-  .icon-btn:disabled { color: var(--muted); cursor: default; opacity: 0.5; }
-  .icon-btn svg { width: 18px; height: 18px; }
-  .icon-btn.active {
-    background: var(--accent-ring);
-    box-shadow: inset 0 0 0 2px var(--accent);
-    color: var(--accent);
+  .menu-item:hover{ background:rgba(255,255,255,.1); }
+  .menu-close{
+    position:absolute; top:calc(1rem + env(safe-area-inset-top,0px)); right:1rem;
+    background:transparent; border:none; color:var(--drawer-fg); cursor:pointer; width:2rem; height:2rem;
   }
 
-  .stamp {
-    position: absolute;
-    font-size: 34px;
-    line-height: 1;
-    user-select: none;
-    cursor: grab;
-    transform: translate(-50%, -50%) rotate(var(--r, 0deg));
-    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.15));
-    touch-action: none;
+  /* ---------- advanced terrain options (inside the menu) ---------- */
+  #mapOptions{ margin-top:.5rem; border-top:1px solid var(--drawer-border); padding-top:.5rem; font-size:13px; }
+  #mapOptions summary{
+    list-style:none; display:flex; align-items:center; gap:8px;
+    padding:.7rem .5rem; border-radius:.6rem; font-size:.92rem;
+    cursor:pointer; user-select:none;
   }
-  .stamp.dragging { cursor: grabbing; z-index: 5; }
-  #canvas.erasing, #canvas.erasing .stamp { cursor: var(--eraser-cur) !important; }
-  .stamp .delete-x {
-    position: absolute;
-    top: -26px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: var(--danger);
-    color: white;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
+  #mapOptions summary::-webkit-details-marker{ display:none; }
+  #mapOptions summary:hover{ background:rgba(255,255,255,.1); }
+  #mapOptions summary svg{ width:16px; height:16px; flex:0 0 auto; }
+  #mapOptions summary .chevron{ margin-left:auto; transition:transform .2s ease; }
+  #mapOptions[open] summary .chevron{ transform:rotate(180deg); }
+  .opts{ display:flex; flex-direction:column; gap:12px; padding:.5rem .5rem 0; }
+  .opt-group{ font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--drawer-muted); margin-top:4px; }
+  .opt{ display:flex; flex-direction:column; gap:4px; }
+  .opt label{ display:flex; justify-content:space-between; }
+  .opt label output{ color:var(--drawer-muted); font-variant-numeric:tabular-nums; }
+  .opt input[type=range]{ width:100%; accent-color:var(--drawer-accent); margin:0; }
+  .opt select{
+    font:inherit; color:var(--drawer-fg); background:rgba(255,255,255,.08);
+    border:1px solid var(--drawer-border); border-radius:8px; padding:6px 8px;
   }
-  .stamp .delete-x svg { width: 13px; height: 13px; }
-  .stamp.selected .delete-x { display: flex; }
-  #mapOptions {
-    position: fixed;
-    top: 16px;
-    right: 16px;
-    width: 300px;
-    max-width: calc(100vw - 32px);
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.08);
-    color: var(--ink);
-    font-size: 13px;
-    z-index: 10;
+  .opt select option{ color:#2A2823; }
+  .opt-check{ display:flex; align-items:center; gap:8px; }
+  .opt-check input{ accent-color:var(--drawer-accent); margin:0; }
+  .opt-legend{ display:flex; flex-wrap:wrap; gap:4px 12px; color:var(--drawer-muted); }
+  .legend-row{ display:inline-flex; align-items:center; gap:5px; }
+  .legend-row .swatch{ width:10px; height:10px; border-radius:3px; }
+  .opt-buttons{ display:flex; gap:8px; }
+  .opt-buttons button{
+    flex:1; font:inherit; font-weight:600; border-radius:9px; padding:8px 10px; cursor:pointer;
+    border:1px solid var(--drawer-border); background:transparent; color:var(--drawer-fg);
   }
-  #mapOptions summary {
-    list-style: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    font-weight: 600;
-    cursor: pointer;
-    user-select: none;
-    border-radius: 14px;
-  }
-  #mapOptions summary::-webkit-details-marker { display: none; }
-  #mapOptions summary:hover { background: var(--hover); }
-  #mapOptions summary svg { width: 16px; height: 16px; flex: 0 0 auto; }
-  #mapOptions summary .chevron { margin-left: auto; transition: transform 0.2s ease; }
-  #mapOptions[open] summary .chevron { transform: rotate(180deg); }
-  #mapOptions[open] summary { border-radius: 14px 14px 0 0; border-bottom: 1px solid var(--border); }
-  .opts {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding: 12px 14px 14px;
-    max-height: calc(100vh - 170px);
-    overflow-y: auto;
-  }
-  .opt-group {
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--muted);
-    margin-top: 4px;
-  }
-  .opt { display: flex; flex-direction: column; gap: 4px; }
-  .opt label { display: flex; justify-content: space-between; color: var(--ink); }
-  .opt label output { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .opt input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
-  .opt select {
-    font: inherit;
-    color: var(--ink);
-    background: var(--bg);
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    padding: 6px 8px;
-  }
-  .opt-check { display: flex; align-items: center; gap: 8px; }
-  .opt-check input { accent-color: var(--accent); margin: 0; }
-  .opt-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); }
-  .legend-row { display: inline-flex; align-items: center; gap: 5px; }
-  .legend-row .swatch { width: 10px; height: 10px; border-radius: 3px; }
-  .opt-buttons { display: flex; gap: 8px; }
-  .opt-buttons button {
-    flex: 1;
-    font: inherit;
-    font-weight: 600;
-    border-radius: 9px;
-    padding: 8px 10px;
-    cursor: pointer;
-    border: 1px solid var(--border-strong);
-    background: transparent;
-    color: var(--ink);
-  }
-  .opt-buttons button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .opt-buttons button:hover { filter: brightness(1.05); background-color: var(--hover); }
-  .opt-buttons button.primary:hover { background-color: var(--accent); }
+  .opt-buttons button:hover{ background:rgba(255,255,255,.1); }
+  .opt-buttons button.primary{ background:var(--drawer-accent); border-color:var(--drawer-accent); color:#1E2218; }
+  .opt-buttons button.primary:hover{ filter:brightness(1.06); }
 </style>
 </head>
 <body>
 
-  <div id="toolbar">
-    <button class="stamp-btn" data-stamp="❤️" title="Heart">❤️</button>
-    <button class="stamp-btn" data-stamp="⭐" title="Star">⭐</button>
-    <button class="stamp-btn" data-stamp="✅" title="Check">✅</button>
-    <button class="stamp-btn" data-stamp="🔥" title="Fire">🔥</button>
-    <button class="stamp-btn" data-stamp="👍" title="Thumbs up">👍</button>
-    <button class="stamp-btn" data-stamp="❓" title="Question">❓</button>
-    <div class="divider"></div>
-    <button class="icon-btn" id="undoBtn" title="Undo (Ctrl/Cmd+Z)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+  <div id="ground" aria-hidden="true">
+    <canvas id="terrain"></canvas>
+    <div class="cloud" style="left:8%;top:12%;width:300px;animation-duration:70s;animation-delay:-10s"></div>
+    <div class="cloud" style="left:55%;top:20%;width:220px;animation-duration:95s;animation-delay:-40s"></div>
+    <div class="cloud" style="left:20%;top:48%;width:340px;animation-duration:110s;animation-delay:-65s"></div>
+    <div class="cloud" style="left:70%;top:58%;width:260px;animation-duration:85s;animation-delay:-20s"></div>
+    <div class="cloud" style="left:35%;top:78%;width:200px;animation-duration:100s;animation-delay:-55s"></div>
+    <div class="cloud" style="left:80%;top:86%;width:320px;animation-duration:120s;animation-delay:-90s"></div>
+  </div>
+
+<div id="app">
+  <svg id="map" preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <!-- exact vectors supplied for this project -->
+      <symbol id="icon-mountain" viewBox="0 0 36 21">
+        <g opacity="0.8">
+        <path d="M1.28564 19.3471L35.0356 19.6695L28.9285 9.67354L25.7142 10.9633L23.1428 9.67354L19.9285 12.8981L17.0356 8.38373L14.7856 10.3184L12.5356 8.38373L10.6071 9.67354L7.71422 7.73883L1.28564 19.3471Z" fill="#516EA4"/>
+        <path d="M8.35547 7.73883L12.2126 1.28979L16.7126 8.06128L14.4626 9.99599L12.2126 8.38373L10.6055 9.99599L8.35547 7.73883Z" fill="#D9D9D9"/>
+        <path d="M23.1445 9.4586L25.8149 5.15924L28.9302 9.67356L27.3726 10.9634L25.8149 9.88853L24.7022 10.9634L23.1445 9.4586Z" fill="#D9D9D9"/>
+        <path d="M12.373 3.01904e-05C12.0229 -0.00167426 11.6777 0.083003 11.3667 0.246827C11.0558 0.410651 10.7884 0.64875 10.5874 0.94078L0.164199 18.8931C0.0599835 19.0675 0.00334904 19.2671 0.000144019 19.4713C-0.003061 19.6755 0.0472797 19.8769 0.145968 20.0546C0.244656 20.2323 0.388114 20.38 0.561529 20.4824C0.734944 20.5847 0.93203 20.6381 1.13244 20.6369H34.8721C35.0721 20.6373 35.2686 20.5833 35.4414 20.4806C35.6142 20.3779 35.757 20.2302 35.8551 20.0526C35.9533 19.875 36.0032 19.6739 35.9998 19.4701C35.9964 19.2663 35.9398 19.0672 35.8358 18.8931L29.9769 8.84308L29.6211 8.22815L27.4932 4.57988C27.4592 4.53186 27.4215 4.4866 27.3806 4.4445C27.1856 4.20613 26.9393 4.01676 26.6609 3.89111C26.3824 3.76546 26.0793 3.70691 25.775 3.72001C25.4707 3.7331 25.1735 3.81749 24.9064 3.96662C24.6393 4.11574 24.4096 4.3256 24.235 4.57988L20.245 11.4129L14.1631 0.94078C13.9612 0.648532 13.693 0.410353 13.3813 0.246547C13.0696 0.0827405 12.7237 -0.00183489 12.373 3.01904e-05ZM12.3685 2.36338L15.5096 7.76466L14.6112 8.67788L13.1476 7.20251C12.937 6.99161 12.6536 6.87343 12.3583 6.87343C12.0631 6.87343 11.7797 6.99161 11.5691 7.20251L10.3239 8.45761L9.57185 7.18645L10.9702 4.77491L12.3685 2.36338ZM25.8652 6.29159L27.3514 8.84079L25.8652 10.0018L24.3791 8.84538L25.8652 6.29159ZM8.27036 9.42818L9.13952 10.8967C9.22732 11.047 9.34767 11.1748 9.49138 11.2704C9.6351 11.3661 9.79837 11.427 9.96871 11.4484C10.1391 11.4699 10.312 11.4514 10.4742 11.3944C10.6365 11.3373 10.7838 11.2432 10.9049 11.1192L12.3685 9.62781L13.8096 11.1192C13.9142 11.2268 14.0388 11.3121 14.176 11.3704C14.3131 11.4286 14.4603 11.4586 14.6089 11.4586C14.7576 11.4586 14.9047 11.4286 15.0419 11.3704C15.1791 11.3121 15.3036 11.2268 15.4083 11.1192L16.6918 9.80449L21.6455 18.3332H3.10493L8.27036 9.42818ZM28.5087 10.8232L32.8928 18.3332H24.262L21.56 13.6753L23.2172 10.8301L25.183 12.356C25.379 12.5082 25.6187 12.5906 25.8652 12.5906C26.1117 12.5906 26.3514 12.5082 26.5475 12.356L28.5087 10.8232Z" fill="#4D3F36"/>
+        </g>
+      </symbol>
+
+      <symbol id="icon-town" viewBox="0 0 39 31">
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M15.0868 24.0802H1L1.53902 12.9485L5.61695 1L8.93673 1.30478L12.2557 1.40672L15.5754 1.30478L18.8952 1L14.8173 12.9485L15.0868 24.0802ZM1.53902 12.9485H14.8173ZM23.5122 24.0802H15.0868L14.8173 12.9485L18.8952 1L22.9731 12.9485L23.5122 24.0802Z" fill="#EBE8DF"/>
+        <path fill="none" d="M15.0868 24.0802H23.5122L22.9731 12.9485L18.8952 1L15.5754 1.30478L12.2557 1.40672L8.93673 1.30478L5.61695 1L1.53902 12.9485L1 24.0802H15.0868ZM15.0868 24.0802L14.8173 12.9485M1.53902 12.9485H14.8173M18.8952 1L14.8173 12.9485" stroke="#4D3F36" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M14.8173 12.9485H1.53906L5.61699 1L8.93677 1.30478L12.2557 1.40672L15.5755 1.30478L18.8953 1L14.8173 12.9485Z" fill="#E59189" stroke="#4D3F36" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M21.918 23.7765L22.3932 24.3839L23.5527 22.5993L23.3151 22.2956L21.918 23.7765Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M20.4961 23.7765L20.9713 24.3839L23.4691 20.8876L23.2315 20.5839L20.4961 23.7765Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M19.0332 23.7766L19.5084 24.384L23.3832 19.1277L23.1456 18.824L19.0332 23.7766Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M17.6685 23.7766L18.1437 24.384L23.3047 17.4836L23.0671 17.181L17.6685 23.7766Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M16.2192 23.7766L16.6945 24.384L23.2198 15.7397L22.9822 15.436L16.2192 23.7766Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M14.8457 23.6381L15.3209 24.2445L23.1334 13.9562L22.8958 13.6525L14.8457 23.6381Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M14.7979 21.6592L15.2731 22.2666L22.8227 12.3132L22.586 12.0095L14.7979 21.6592Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M14.7422 19.3681L15.2174 19.9755L22.2616 10.668L22.024 10.3643L14.7422 19.3681Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M14.7026 17.6811L15.177 18.2885L21.8493 9.45751L21.6117 9.15381L14.7026 17.6811Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M14.6533 15.7L15.1285 16.3074L21.3626 8.0345L21.1258 7.73187L14.6533 15.7Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M14.6118 13.9862L15.087 14.5936L20.9424 6.80468L20.7056 6.50098L14.6118 13.9862Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M14.8931 11.7293L15.3674 12.3357L20.4924 5.48253L20.2547 5.17883L14.8931 11.7293Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M16.3091 7.57948L16.7835 8.18581L19.9361 3.85351L19.6985 3.5498L16.3091 7.57948Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M17.4585 4.21084L17.9337 4.81717L19.4844 2.53136L19.2468 2.22766L17.4585 4.21084Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M18.5244 1.08799L18.9996 1.69432L19.0668 1.30584L18.8292 1.00214L18.5244 1.08799Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M7.5083 20.4444H8.84746V17.4793L8.49735 16.5843H7.85841L7.5083 17.4793V20.4444Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M29.4102 29.7304H17.3477L17.8044 20.3135L21.8823 10.0756L24.7269 10.3364L27.5706 10.4233L30.4152 10.3364L33.2597 10.0756L29.1818 20.3135L29.4102 29.7304ZM17.8044 20.3135H29.1818ZM37.7936 29.7304H29.4102L29.1818 20.3135L33.2597 10.0756L37.3377 20.3135L37.7936 29.7304Z" fill="#EBE8DF"/>
+        <path fill="none" d="M29.4102 29.7304H37.7936L37.3377 20.3135L33.2597 10.0756L30.4152 10.3364L27.5706 10.4233L24.7269 10.3364L21.8823 10.0756L17.8044 20.3135L17.3477 29.7304H29.4102ZM29.4102 29.7304L29.1818 20.3135M17.8044 20.3135H29.1818M33.2597 10.0756L29.1818 20.3135" stroke="#4D3F36" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M29.1821 20.3135H17.8047L21.8826 10.0756L24.7272 10.3364L27.5709 10.4233L30.4155 10.3364L33.26 10.0756L29.1821 20.3135Z" fill="#E59189" stroke="#4D3F36" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M36.1992 29.4267L36.6744 30.0341L37.8339 28.2484L37.5963 27.9457L36.1992 29.4267Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M34.7935 29.4267L35.2687 30.0341L37.7514 26.5571L37.5138 26.2534L34.7935 29.4267Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M33.3237 29.4267L33.7989 30.0341L37.6661 24.7875L37.4285 24.4838L33.3237 29.4267Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M31.6733 29.4267L32.1477 30.0341L37.5698 22.8L37.3322 22.4963L31.6733 29.4267Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M30.2246 29.4267L30.6998 30.0341L37.4855 21.0572L37.2479 20.7535L30.2246 29.4267Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M29.1519 28.5553L29.6262 29.1627L37.0307 19.3949L36.793 19.0912L29.1519 28.5553Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M29.103 26.5485L29.5782 27.1559L36.4839 18.0245L36.2472 17.7208L29.103 26.5485Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M29.0571 24.6598L29.5323 25.2661L35.9704 16.7335L35.7328 16.4308L29.0571 24.6598Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M29.0137 22.873L29.4889 23.4804L35.4836 15.5133L35.246 15.2096L29.0137 22.873Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M28.9712 21.099L29.4456 21.7054L35.0012 14.3017L34.7636 13.998L28.9712 21.099Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M29.4834 18.6576L29.9586 19.264L34.5302 13.118L34.2926 12.8143L29.4834 18.6576Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M31.1909 14.3704L31.6661 14.9767L33.9742 11.723L33.7366 11.4193L31.1909 14.3704Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M32.8428 10.2248L33.3171 10.8311L33.4372 10.3751L33.2004 10.0714L32.8428 10.2248Z" fill="#4D3F36"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M22.8232 26.952H24.1624V23.9869L23.8123 23.0919H23.1734L22.8232 23.9869V26.952Z" fill="#4D3F36"/>
+      </symbol>
+
+      <symbol id="icon-landmark" viewBox="0 0 26 25">
+        <g opacity="0.8">
+        <path d="M1.24515 21.1766C0.751024 19.6943 1.45103 19.0492 1.8628 18.9119C2.34319 18.9119 4.04516 18.459 7.00989 16.6472C10.7158 14.3825 13.2612 12.3612 14.8335 10.2648C16.0688 8.61771 16.961 4.29414 17.0982 3.05884C17.5786 3.67649 18.8276 4.91179 19.9806 4.91179C21.1335 4.91179 21.8335 4.50003 22.0394 4.29414C21.4904 6.62749 19.5276 12.1589 16.0688 15.6178C11.7452 19.9413 8.2452 21.1766 5.98047 22.4119C3.71575 23.6472 1.8628 23.0296 1.24515 21.1766Z" fill="#9584CC"/>
+        <path fill="none" d="M24.0981 21.3825V5.52945V3.88238C24.0295 3.33335 23.6863 2.35883 22.8628 2.85296C21.8334 3.47061 22.0393 4.29414 21.8334 5.52945C21.6275 6.76475 20.5981 10.6765 17.098 14.5883C14.298 17.7178 8.38229 21.2453 5.77442 22.6178C5.29403 22.8923 4.045 23.359 2.89205 23.0296C1.45086 22.6178 0.833208 21.3825 1.03909 20.3531C1.24498 19.3237 1.24498 19.3237 2.2744 18.9119C3.30382 18.5001 7.62738 16.8531 10.7156 14.3825C12.7745 12.7354 15.2451 10.3471 16.0686 8.20594C16.8922 6.06475 17.098 3.74512 17.098 2.85296C17.1667 2.2353 17.5098 1 18.3333 1C19.3628 1 19.5687 1.20588 19.7745 1.82354C19.9804 2.44119 20.1863 2.2353 20.1863 4.9118" stroke="#6C6683" stroke-width="2"/>
+        <path fill="none" d="M19.7744 10.8824V18.5002" stroke="#6C6683" stroke-width="2"/>
+        <path fill="none" d="M19.7744 15.206L24.098 17.6766M24.098 13.353L19.7744 11.5001M24.098 9.23535L21.0097 8.20593" stroke="#6C6683" stroke-width="2"/>
+        </g>
+      </symbol>
+
+      <symbol id="pond-dots" viewBox="0 0 20 18">
+        <g opacity="0.8">
+        <path d="M0.757727 2.13901C0.952697 2.19855 1.14013 2.28208 1.31605 2.38784C1.93401 2.77136 2.64026 2.97386 3.35992 2.97386C4.07958 2.97386 4.78583 2.77136 5.40379 2.38784C5.79308 2.15888 6.23271 2.03855 6.67996 2.03855C7.1272 2.03855 7.56684 2.15888 7.95613 2.38784C8.58155 2.75971 9.28952 2.95533 10.01 2.95533C10.7304 2.95533 11.4384 2.75971 12.0638 2.38784C12.4531 2.15888 12.8927 2.03855 13.34 2.03855C13.7872 2.03855 14.2269 2.15888 14.6162 2.38784C15.248 2.76334 15.9622 2.96329 16.6899 2.96842C17.393 2.96691 18.0824 2.76619 18.6839 2.38784C18.8599 2.28208 19.0473 2.19855 19.2423 2.13901C19.4961 2.06202 19.7102 1.88333 19.8373 1.64224C19.9644 1.40114 19.9943 1.11741 19.9202 0.853441C19.8462 0.589475 19.6744 0.366906 19.4425 0.234694C19.2107 0.102482 18.9378 0.0714592 18.6839 0.148449C18.3344 0.260624 17.9995 0.417327 17.6869 0.614988C17.3693 0.808128 17.008 0.909921 16.6401 0.909921C16.2721 0.909921 15.9108 0.808128 15.5932 0.614988C14.9019 0.211766 14.1226 0 13.33 0C12.5374 0 11.7581 0.211766 11.0668 0.614988C10.7458 0.808916 10.3812 0.911066 10.01 0.911066C9.63874 0.911066 9.27412 0.808916 8.95314 0.614988C8.26186 0.211766 7.48254 0 6.68993 0C5.89732 0 5.118 0.211766 4.42672 0.614988C4.10911 0.808128 3.7478 0.909921 3.37986 0.909921C3.01192 0.909921 2.65061 0.808128 2.333 0.614988C2.02043 0.417327 1.68555 0.260624 1.33599 0.148449C1.08215 0.0714592 0.809285 0.102482 0.577435 0.234694C0.345586 0.366906 0.173739 0.589475 0.0997009 0.853441C0.0256624 1.11741 0.0554964 1.40114 0.18264 1.64224C0.309783 1.88333 0.523821 2.06202 0.777667 2.13901H0.757727ZM18.7039 10.516C18.3543 10.6282 18.0194 10.7849 17.7069 10.9825C17.3893 11.1757 17.028 11.2775 16.66 11.2775C16.2921 11.2775 15.9308 11.1757 15.6132 10.9825C14.9219 10.5793 14.1426 10.3675 13.3499 10.3675C12.5573 10.3675 11.778 10.5793 11.0867 10.9825C10.7658 11.1764 10.4011 11.2786 10.0299 11.2786C9.65868 11.2786 9.29406 11.1764 8.97308 10.9825C8.2818 10.5793 7.50248 10.3675 6.70987 10.3675C5.91726 10.3675 5.13794 10.5793 4.44666 10.9825C4.12905 11.1757 3.76774 11.2775 3.3998 11.2775C3.03186 11.2775 2.67055 11.1757 2.35294 10.9825C2.04037 10.7849 1.70549 10.6282 1.35593 10.516C1.23024 10.4779 1.09856 10.4659 0.968405 10.4806C0.838252 10.4954 0.712176 10.5368 0.597375 10.6022C0.482575 10.6677 0.381299 10.756 0.299329 10.8622C0.217359 10.9684 0.156301 11.0903 0.119641 11.221C0.0829809 11.3517 0.0714366 11.4886 0.0856672 11.6239C0.0998979 11.7593 0.139625 11.8904 0.20258 12.0098C0.265535 12.1291 0.350485 12.2345 0.45258 12.3197C0.554675 12.4049 0.671915 12.4684 0.797607 12.5065C0.992577 12.5661 1.18001 12.6496 1.35593 12.7554C1.97389 13.1389 2.68014 13.3414 3.3998 13.3414C4.11946 13.3414 4.82571 13.1389 5.44367 12.7554C5.83296 12.5264 6.2726 12.4061 6.71984 12.4061C7.16708 12.4061 7.60672 12.5264 7.99601 12.7554C8.62143 13.1272 9.3294 13.3229 10.0498 13.3229C10.7703 13.3229 11.4783 13.1272 12.1037 12.7554C12.493 12.5264 12.9326 12.4061 13.3799 12.4061C13.8271 12.4061 14.2667 12.5264 14.656 12.7554C15.2879 13.1309 16.0021 13.3308 16.7298 13.3359C17.4329 13.3344 18.1222 13.1337 18.7238 12.7554C18.8997 12.6496 19.0872 12.5661 19.2822 12.5065C19.536 12.4296 19.75 12.2509 19.8772 12.0098C20.0043 11.7687 20.0342 11.4849 19.9601 11.221C19.8861 10.957 19.7142 10.7344 19.4824 10.6022C19.2505 10.47 18.9777 10.439 18.7238 10.516H18.7039ZM18.7039 5.33221C18.3543 5.44439 18.0194 5.60109 17.7069 5.79875C17.3893 5.99189 17.028 6.09368 16.66 6.09368C16.2921 6.09368 15.9308 5.99189 15.6132 5.79875C14.9219 5.39553 14.1426 5.18377 13.3499 5.18377C12.5573 5.18377 11.778 5.39553 11.0867 5.79875C10.7658 5.99268 10.4011 6.09483 10.0299 6.09483C9.65868 6.09483 9.29406 5.99268 8.97308 5.79875C8.2818 5.39553 7.50248 5.18377 6.70987 5.18377C5.91726 5.18377 5.13794 5.39553 4.44666 5.79875C4.12905 5.99189 3.76774 6.09368 3.3998 6.09368C3.03186 6.09368 2.67055 5.99189 2.35294 5.79875C2.04037 5.60109 1.70549 5.44439 1.35593 5.33221C1.22539 5.28096 1.08595 5.25878 0.946637 5.2671C0.807326 5.27541 0.671246 5.31405 0.547199 5.3805C0.423151 5.44695 0.313899 5.53973 0.226509 5.65286C0.13912 5.76598 0.0755394 5.89692 0.0398804 6.03721C0.00322029 6.16791 -0.00832404 6.30484 0.00590662 6.44018C0.0201373 6.57552 0.0598642 6.70662 0.122819 6.826C0.185774 6.94538 0.270724 7.05069 0.372819 7.13593C0.474914 7.22117 0.592155 7.28466 0.717847 7.32278C0.912816 7.38231 1.10025 7.46584 1.27617 7.5716C1.89413 7.95513 2.60038 8.15762 3.32004 8.15762C4.0397 8.15762 4.74595 7.95513 5.36391 7.5716C5.7532 7.34264 6.19283 7.22231 6.64008 7.22231C7.08732 7.22231 7.52696 7.34264 7.91625 7.5716C8.54167 7.94348 9.24964 8.13909 9.97009 8.13909C10.6905 8.13909 11.3985 7.94348 12.0239 7.5716C12.4132 7.34264 12.8529 7.22231 13.3001 7.22231C13.7473 7.22231 14.187 7.34264 14.5763 7.5716C15.2081 7.9471 15.9223 8.14705 16.65 8.15218C17.3531 8.15067 18.0425 7.94996 18.6441 7.5716C18.82 7.46584 19.0074 7.38231 19.2024 7.32278C19.4562 7.24579 19.6703 7.06709 19.7974 6.826C19.9246 6.58491 19.9544 6.30117 19.8804 6.03721C19.8063 5.77324 19.6345 5.55067 19.4026 5.41846C19.1708 5.28625 18.8979 5.25522 18.6441 5.33221H18.7039Z" fill="#388D72"/>
+        <path d="M17.7068 15.6411C18.0194 15.4435 18.3543 15.2868 18.7039 15.1746H18.7238C18.9776 15.0976 19.2505 15.1286 19.4824 15.2608C19.7142 15.393 19.8861 15.6156 19.9601 15.8796C20.0341 16.1435 20.0043 16.4273 19.8772 16.6684C19.75 16.9095 19.536 17.0882 19.2821 17.1652C19.0872 17.2247 18.8997 17.3082 18.7238 17.414C18.1222 17.7923 17.4328 17.993 16.7298 17.9946C16.002 17.9894 15.2878 17.7895 14.656 17.414C14.2667 17.185 13.8271 17.0647 13.3798 17.0647C12.9326 17.0647 12.4929 17.185 12.1037 17.414C11.4782 17.7859 10.7703 17.9815 10.0498 17.9815C9.32937 17.9815 8.6214 17.7859 7.99598 17.414C7.60669 17.185 7.16705 17.0647 6.71981 17.0647C6.27256 17.0647 5.83293 17.185 5.44364 17.414C4.82568 17.7975 4.11943 18 3.39977 18C2.68011 18 1.97386 17.7975 1.3559 17.414C1.17998 17.3082 0.992546 17.2247 0.797576 17.1652C0.671884 17.127 0.554644 17.0635 0.452549 16.9783C0.350454 16.8931 0.265504 16.7878 0.202549 16.6684C0.139594 16.549 0.0998666 16.4179 0.085636 16.2826C0.0714053 16.1472 0.0829496 16.0103 0.11961 15.8796C0.15627 15.7489 0.217328 15.627 0.299298 15.5208C0.381268 15.4146 0.482544 15.3263 0.597344 15.2608C0.712144 15.1954 0.83822 15.1541 0.968374 15.1393C1.09853 15.1245 1.23021 15.1365 1.3559 15.1746C1.70546 15.2868 2.04034 15.4435 2.35291 15.6411C2.67052 15.8343 3.03183 15.9361 3.39977 15.9361C3.7677 15.9361 4.12901 15.8343 4.44663 15.6411C5.13791 15.2379 5.91723 15.0261 6.70984 15.0261C7.50245 15.0261 8.28177 15.2379 8.97305 15.6411C9.29403 15.8351 9.65865 15.9372 10.0299 15.9372C10.4011 15.9372 10.7657 15.8351 11.0867 15.6411C11.778 15.2379 12.5573 15.0261 13.3499 15.0261C14.1425 15.0261 14.9218 15.2379 15.6131 15.6411C15.9307 15.8343 16.2921 15.9361 16.66 15.9361C17.0279 15.9361 17.3892 15.8343 17.7068 15.6411Z" fill="#388D72"/>
+        </g>
+      </symbol>
+
+      <symbol id="trees-full" viewBox="0 0 120 98">
+        <g opacity="0.75"><ellipse cx="27.923" cy="13.6154" rx="7.61538" ry="8.53846" fill="#BA9D3B"/><path d="M27.4616 13.6154C27.4616 13.0847 27.5743 12.5659 27.7021 12.1493C27.7771 11.9046 28.1379 11.8723 28.2099 12.1179C28.2586 12.284 28.3138 12.5299 28.3846 12.9231C28.5788 14.0011 28.6981 15.3288 28.7173 16.6213C28.7201 16.8104 28.8926 16.9504 29.0736 16.8954C29.4968 16.7668 30.1026 16.5221 30.5795 16.1438C30.7021 16.0466 30.8201 15.9374 30.9321 15.8219C31.1652 15.5814 31.6353 15.7769 31.5231 16.0925C31.3086 16.6958 31.0005 17.2848 30.5795 17.6187C29.9498 18.1182 29.3785 18.3401 29.0166 18.4217C28.8549 18.4581 28.72 18.5958 28.72 18.7615V25.3775C28.72 25.4022 28.723 25.4268 28.7292 25.4507C28.8236 25.8198 29.0458 26.6112 29.2513 27.1003C29.3803 27.4073 29.2562 28.1538 28.9232 28.1538H26.5066C26.2454 28.1538 26.1246 27.6841 26.3293 27.5217C26.7486 27.1891 27.0301 26.0085 27.1225 25.4375C27.125 25.422 27.1262 25.4069 27.1262 25.3912V18.6228C27.1262 18.5221 27.0744 18.4296 26.9974 18.3646C26.536 17.975 26.2 17.2336 25.6154 16.6154C25.2938 16.2752 25.003 15.5709 24.7938 14.8392C24.6995 14.5093 25.1483 14.3721 25.3236 14.667L25.3846 14.7692C25.9868 15.7729 27.1431 17.5381 27.4425 16.8938C27.4565 16.8637 27.4616 16.8296 27.4616 16.7964V13.6154Z" fill="#7C4343"/></g>
+        <g opacity="0.75"><ellipse cx="9.923" cy="50.0769" rx="7.61538" ry="8.53846" fill="#BA9D3B"/><path d="M9.46156 50.0769C9.46156 49.5462 9.57434 49.0275 9.70209 48.6108C9.77711 48.3661 10.1379 48.3338 10.2099 48.5794C10.2586 48.7455 10.3138 48.9914 10.3846 49.3846C10.5788 50.4627 10.6981 51.7903 10.7173 53.0829C10.7201 53.272 10.8926 53.412 11.0736 53.357C11.4968 53.2283 12.1026 52.9836 12.5795 52.6054C12.7021 52.5081 12.8201 52.3989 12.9321 52.2835C13.1652 52.0429 13.6353 52.2384 13.5231 52.554C13.3086 53.1573 13.0005 53.7463 12.5795 54.0803C11.9498 54.5797 11.3785 54.8017 11.0166 54.8832C10.8549 54.9196 10.72 55.0574 10.72 55.2231V61.839C10.72 61.8637 10.723 61.8883 10.7292 61.9123C10.8236 62.2814 11.0458 63.0728 11.2513 63.5619C11.3803 63.8689 11.2562 64.6154 10.9232 64.6154H8.50664C8.2454 64.6154 8.12459 64.1456 8.32925 63.9833C8.74863 63.6506 9.03007 62.4701 9.12254 61.899C9.12504 61.8836 9.12618 61.8684 9.12618 61.8528V55.0844C9.12618 54.9837 9.07437 54.8912 8.99742 54.8262C8.53604 54.4366 8.19999 53.6952 7.61541 53.0769C7.29378 52.7368 7.003 52.0325 6.7938 51.3008C6.69947 50.9708 7.14826 50.8336 7.32361 51.1286L7.38464 51.2308C7.98684 52.2344 9.14311 53.9997 9.4425 53.3554C9.45649 53.3253 9.46156 53.2912 9.46156 53.258V50.0769Z" fill="#7C4343"/></g>
+        <g opacity="0.8"><ellipse cx="58.8463" cy="49.1538" rx="7.61538" ry="8.53846" fill="#BA9D3B"/><path d="M58.3844 49.1538C58.3844 48.6231 58.4972 48.1044 58.6249 47.6877C58.7 47.443 59.0608 47.4107 59.1328 47.6563C59.1815 47.8224 59.2367 48.0683 59.3075 48.4615C59.5017 49.5396 59.621 50.8672 59.6401 52.1598C59.643 52.3489 59.8155 52.4889 59.9964 52.4339C60.4197 52.3052 61.0254 52.0606 61.5024 51.6823C61.625 51.585 61.743 51.4758 61.8549 51.3604C62.0881 51.1198 62.5582 51.3153 62.446 51.6309C62.2315 52.2342 61.9234 52.8232 61.5024 53.1572C60.8727 53.6566 60.3013 53.8786 59.9394 53.9601C59.7778 53.9965 59.6429 54.1343 59.6429 54.3V60.9159C59.6429 60.9407 59.6459 60.9652 59.652 60.9892C59.7465 61.3583 59.9686 62.1497 60.1742 62.6388C60.3032 62.9458 60.1791 63.6923 59.8461 63.6923H57.4295C57.1683 63.6923 57.0474 63.2225 57.2521 63.0602C57.6715 62.7275 57.9529 61.547 58.0454 60.9759C58.0479 60.9605 58.049 60.9453 58.049 60.9297V54.1613C58.049 54.0606 57.9972 53.9681 57.9203 53.9031C57.4589 53.5135 57.1228 52.7721 56.5383 52.1538C56.2166 51.8137 55.9258 51.1094 55.7167 50.3777C55.6223 50.0477 56.0711 49.9105 56.2465 50.2055L56.3075 50.3077C56.9097 51.3113 58.066 53.0766 58.3654 52.4323C58.3793 52.4022 58.3844 52.3681 58.3844 52.3349V49.1538Z" fill="#7C4343"/></g>
+        <g opacity="0.6"><ellipse cx="66.0002" cy="9.46154" rx="6.92308" ry="9.46154" fill="#B56E4F"/><path d="M66.4615 6.23078C66.4615 5.66317 66.3451 5.0083 66.2197 4.48079C66.1551 4.2089 65.8191 4.20052 65.7407 4.46876C65.5884 4.9897 65.4178 5.68998 65.3076 6.46155C65.1371 7.65521 65.0847 10.647 65.0777 12.3092C65.0769 12.5044 64.8941 12.6429 64.713 12.5702C64.3494 12.4242 63.8549 12.1627 63.4615 11.7692C63.4303 11.7381 63.3996 11.7059 63.3691 11.6727C63.1355 11.4176 62.6045 11.6058 62.708 11.9358C62.8897 12.5159 63.137 13.0601 63.4615 13.3846C63.9879 13.9111 64.4674 14.156 64.783 14.2533C64.9413 14.3021 65.0768 14.442 65.0768 14.6077V21.8934C65.0768 21.9131 65.075 21.9326 65.071 21.952C64.9902 22.3515 64.7955 23.2288 64.6153 23.7692C64.5959 23.8275 64.5678 23.8845 64.5326 23.9402C64.3504 24.2276 64.5083 24.9231 64.8486 24.9231H66.919C67.2074 24.9231 67.3577 24.4347 67.1538 24.2308C66.7845 23.8616 66.5384 22.5385 66.4615 21.9231V11.4482C66.4615 11.3592 66.5008 11.2751 66.5685 11.2174C67.0713 10.7886 68.0239 9.91677 68.5384 9.23078C68.7704 8.92139 68.9296 8.35814 69.0361 7.73451C69.0957 7.38579 68.491 7.25123 68.2953 7.54593C68.2267 7.64915 68.154 7.74976 68.0768 7.84617C67.3503 8.75436 66.7131 9.58809 66.473 8.80887C66.4651 8.78339 66.4615 8.75593 66.4615 8.72927V6.23078Z" fill="#654A4A"/></g>
+        <g opacity="0.6"><ellipse cx="95.0769" cy="57.4615" rx="6.92308" ry="9.46154" fill="#B56E4F"/><path d="M95.5386 54.2308C95.5386 53.6632 95.4223 53.0083 95.2969 52.4808C95.2323 52.2089 94.8963 52.2005 94.8178 52.4688C94.6655 52.9897 94.495 53.69 94.3848 54.4616C94.2142 55.6552 94.1618 58.647 94.1548 60.3092C94.154 60.5044 93.9713 60.6429 93.7902 60.5702C93.4265 60.4242 92.9321 60.1627 92.5386 59.7692C92.5075 59.7381 92.4767 59.7059 92.4463 59.6727C92.2127 59.4176 91.6817 59.6058 91.7851 59.9358C91.9669 60.5159 92.2141 61.0601 92.5386 61.3846C93.065 61.9111 93.5446 62.156 93.8601 62.2533C94.0185 62.3021 94.154 62.442 94.154 62.6077V69.8934C94.154 69.9131 94.1521 69.9326 94.1482 69.952C94.0674 70.3515 93.8726 71.2288 93.6925 71.7692C93.673 71.8275 93.645 71.8845 93.6097 71.9402C93.4275 72.2276 93.5854 72.9231 93.9258 72.9231H95.9962C96.2846 72.9231 96.4349 72.4347 96.2309 72.2308C95.8617 71.8616 95.6155 70.5385 95.5386 69.9231V59.4482C95.5386 59.3592 95.5779 59.2751 95.6457 59.2174C96.1484 58.7886 97.101 57.9168 97.6155 57.2308C97.8476 56.9214 98.0067 56.3581 98.1133 55.7345C98.1729 55.3858 97.5682 55.2512 97.3724 55.5459C97.3039 55.6492 97.2311 55.7498 97.154 55.8462C96.4274 56.7544 95.7902 57.5881 95.5501 56.8089C95.5422 56.7834 95.5386 56.7559 95.5386 56.7293V54.2308Z" fill="#654A4A"/></g>
+        <g opacity="0.75"><ellipse cx="32.7693" cy="43.1539" rx="6.92308" ry="9.46154" fill="#B56E4F"/><path d="M33.231 39.9231C33.231 39.3555 33.1147 38.7006 32.9893 38.1731C32.9247 37.9012 32.5886 37.8928 32.5102 38.1611C32.3579 38.682 32.1874 39.3823 32.0771 40.1539C31.9066 41.3475 31.8542 44.3394 31.8472 46.0015C31.8464 46.1967 31.6637 46.3352 31.4826 46.2625C31.1189 46.1165 30.6245 45.855 30.231 45.4616C30.1999 45.4304 30.1691 45.3982 30.1387 45.365C29.9051 45.11 29.3741 45.2981 29.4775 45.6281C29.6593 46.2082 29.9065 46.7525 30.231 47.077C30.7574 47.6034 31.237 47.8484 31.5525 47.9456C31.7109 47.9944 31.8464 48.1343 31.8464 48.3V55.5857C31.8464 55.6055 31.8445 55.6249 31.8406 55.6443C31.7598 56.0438 31.565 56.9211 31.3848 57.4616C31.3654 57.5198 31.3373 57.5768 31.3021 57.6325C31.1199 57.9199 31.2778 58.6154 31.6181 58.6154H33.6885C33.977 58.6154 34.1272 58.1271 33.9233 57.9231C33.5541 57.5539 33.3079 56.2308 33.231 55.6154V45.1405C33.231 45.0515 33.2703 44.9675 33.3381 44.9097C33.8408 44.4809 34.7934 43.6091 35.3079 42.9231C35.54 42.6137 35.6991 42.0505 35.8057 41.4268C35.8653 41.0781 35.2606 40.9436 35.0648 41.2383C34.9963 41.3415 34.9235 41.4421 34.8464 41.5385C34.1198 42.4467 33.4826 43.2804 33.2425 42.5012C33.2346 42.4757 33.231 42.4483 33.231 42.4216V39.9231Z" fill="#654A4A"/></g>
+        <ellipse cx="76.8463" cy="41.3077" rx="7.61538" ry="9.46154" fill="#9FAA4C"/><path d="M76.8462 39.4615C76.8462 38.8749 76.7606 37.719 76.6936 36.7484C76.6713 36.4238 77.0405 36.3412 77.1462 36.6489C77.4518 37.539 77.7692 38.7408 77.7692 39.9231V43.9308C77.7692 44.1236 77.9493 44.2689 78.1343 44.2145C78.5081 44.1044 79.0079 43.9026 79.4615 43.4849C79.7477 43.2214 80.0565 42.5892 80.3243 41.9412C80.455 41.6251 80.7206 41.6968 80.6271 42.0259C80.3946 42.8443 80.0575 43.6698 79.6154 44.0769C78.9758 44.6658 78.3884 45.298 78.0302 45.5634C77.8985 45.6609 77.7672 45.8238 77.7646 45.9876L77.6313 54.5273C77.631 54.5503 77.6332 54.573 77.6381 54.5955C77.7301 55.0139 77.9503 55.9259 78.1538 56.4883C78.1806 56.5622 78.2219 56.6343 78.2747 56.7042C78.4825 56.979 78.3291 57.6923 77.9846 57.6923H75.5063C75.2064 57.6923 75.0563 57.173 75.2769 56.9699C75.6954 56.5846 75.9744 55.204 76.0615 54.5619V43.6329C76.0615 43.5396 76.0183 43.452 75.945 43.3944C75.3764 42.9484 74.2924 42.0355 73.7077 41.3177C73.406 40.9473 73.213 40.2282 73.094 39.4654C73.04 39.1194 73.6133 38.9909 73.7999 39.2873C73.9277 39.4904 74.071 39.689 74.2308 39.8729C75.0677 40.8361 76.1231 41.9599 76.3846 41.0769C76.5846 40.6154 76.8462 40.4247 76.8462 39.4615Z" fill="#9C7F65"/>
+        <ellipse cx="7.61538" cy="21" rx="7.61538" ry="9.46154" fill="#9FAA4C"/><path d="M7.6152 19.1538C7.6152 18.5673 7.52961 17.4114 7.46268 16.4408C7.4403 16.1161 7.80959 16.0335 7.91527 16.3413C8.22087 17.2313 8.53827 18.4331 8.53827 19.6154V23.6231C8.53827 23.8159 8.7183 23.9613 8.9033 23.9068C9.27719 23.7967 9.77692 23.5949 10.2306 23.1773C10.5168 22.9138 10.8255 22.2815 11.0933 21.6335C11.224 21.3174 11.4897 21.3892 11.3962 21.7182C11.1637 22.5366 10.8266 23.3621 10.3844 23.7692C9.74488 24.3581 9.15743 24.9903 8.79922 25.2557C8.66757 25.3533 8.53622 25.5161 8.53366 25.6799L8.40035 34.2196C8.39999 34.2426 8.40222 34.2653 8.40716 34.2878C8.49919 34.7063 8.71929 35.6182 8.92289 36.1806C8.94966 36.2545 8.99098 36.3266 9.04379 36.3965C9.25153 36.6713 9.09813 37.3846 8.75366 37.3846H6.27533C5.97548 37.3846 5.82538 36.8653 6.04597 36.6622C6.46443 36.2769 6.7434 34.8963 6.83058 34.2542V23.3252C6.83058 23.2319 6.78738 23.1443 6.714 23.0867C6.14548 22.6407 5.06146 21.7279 4.47674 21.01C4.17501 20.6396 3.98207 19.9206 3.86304 19.1577C3.80905 18.8117 4.38237 18.6833 4.56891 18.9796C4.69674 19.1828 4.84001 19.3813 4.99981 19.5652C5.83674 20.5284 6.89212 21.6522 7.15366 20.7692C7.35366 20.3077 7.6152 20.1171 7.6152 19.1538Z" fill="#9C7F65"/>
+        <ellipse cx="80.6154" cy="81.4615" rx="7.61538" ry="9.46154" fill="#9FAA4C"/><path d="M80.6152 79.6153C80.6152 79.0288 80.5296 77.8729 80.4627 76.9022C80.4403 76.5776 80.8096 76.495 80.9153 76.8028C81.2209 77.6928 81.5383 78.8946 81.5383 80.0769V84.0846C81.5383 84.2774 81.7183 84.4227 81.9033 84.3683C82.2772 84.2582 82.7769 84.0564 83.2306 83.6387C83.5168 83.3753 83.8255 82.743 84.0933 82.095C84.224 81.7789 84.4897 81.8506 84.3962 82.1797C84.1637 82.9981 83.8266 83.8236 83.3844 84.2307C82.7449 84.8196 82.1574 85.4518 81.7992 85.7172C81.6676 85.8148 81.5362 85.9776 81.5337 86.1414L81.4004 94.6811C81.4 94.7041 81.4022 94.7268 81.4072 94.7493C81.4992 95.1678 81.7193 96.0797 81.9229 96.6421C81.9497 96.716 81.991 96.7881 82.0438 96.858C82.2515 97.1328 82.0981 97.8461 81.7537 97.8461H79.2753C78.9755 97.8461 78.8254 97.3268 79.046 97.1237C79.4644 96.7384 79.7434 95.3578 79.8306 94.7157V83.7867C79.8306 83.6934 79.7874 83.6058 79.714 83.5482C79.1455 83.1022 78.0615 82.1893 77.4767 81.4715C77.175 81.1011 76.9821 80.382 76.863 79.6192C76.809 79.2732 77.3824 79.1447 77.5689 79.4411C77.6967 79.6443 77.84 79.8428 77.9998 80.0267C78.8367 80.9899 79.8921 82.1137 80.1537 81.2307C80.3537 80.7692 80.6152 80.5785 80.6152 79.6153Z" fill="#9C7F65"/>
+        <ellipse cx="112.384" cy="48.2308" rx="7.61538" ry="9.46154" fill="#9FAA4C"/><path d="M112.385 46.3846C112.385 45.798 112.299 44.6421 112.232 43.6715C112.21 43.3469 112.579 43.2643 112.685 43.572C112.99 44.4621 113.308 45.6639 113.308 46.8462V50.8539C113.308 51.0467 113.488 51.192 113.673 51.1376C114.047 51.0275 114.546 50.8257 115 50.408C115.286 50.1445 115.595 49.5123 115.863 48.8643C115.994 48.5482 116.259 48.6199 116.166 48.949C115.933 49.7674 115.596 50.5929 115.154 51C114.514 51.5888 113.927 52.2211 113.569 52.4865C113.437 52.584 113.306 52.7469 113.303 52.9107L113.17 61.4504C113.17 61.4734 113.172 61.4961 113.177 61.5185C113.269 61.937 113.489 62.849 113.692 63.4114C113.719 63.4853 113.761 63.5574 113.813 63.6273C114.021 63.9021 113.868 64.6154 113.523 64.6154H111.045C110.745 64.6154 110.595 64.0961 110.815 63.893C111.234 63.5077 111.513 62.1271 111.6 61.485V50.556C111.6 50.4627 111.557 50.3751 111.484 50.3175C110.915 49.8715 109.831 48.9586 109.246 48.2408C108.945 47.8704 108.752 47.1513 108.633 46.3885C108.579 46.0425 109.152 45.914 109.338 46.2104C109.466 46.4135 109.61 46.6121 109.769 46.796C110.606 47.7592 111.662 48.8829 111.923 48C112.123 47.5385 112.385 47.3478 112.385 46.3846Z" fill="#9C7F65"/>
+        <g opacity="0.6"><ellipse cx="43.6154" cy="71.7692" rx="7.61538" ry="9.46154" fill="#9FAA4C"/><path d="M43.6152 69.9231C43.6152 69.3365 43.5296 68.1806 43.4627 67.21C43.4403 66.8853 43.8096 66.8027 43.9153 67.1105C44.2209 68.0005 44.5383 69.2023 44.5383 70.3846V74.3923C44.5383 74.5852 44.7183 74.7305 44.9033 74.676C45.2772 74.5659 45.7769 74.3642 46.2306 73.9465C46.5168 73.683 46.8255 73.0508 47.0933 72.4028C47.224 72.0866 47.4897 72.1584 47.3962 72.4875C47.1637 73.3058 46.8266 74.1314 46.3844 74.5385C45.7449 75.1273 45.1574 75.7595 44.7992 76.0249C44.6676 76.1225 44.5362 76.2853 44.5337 76.4492L44.4004 84.9888C44.4 85.0118 44.4022 85.0346 44.4072 85.057C44.4992 85.4755 44.7193 86.3875 44.9229 86.9498C44.9497 87.0238 44.991 87.0959 45.0438 87.1657C45.2515 87.4405 45.0981 88.1538 44.7537 88.1538H42.2753C41.9755 88.1538 41.8254 87.6345 42.046 87.4314C42.4644 87.0462 42.7434 85.6655 42.8306 85.0234V74.0944C42.8306 74.0012 42.7874 73.9135 42.714 73.856C42.1455 73.4099 41.0615 72.4971 40.4767 71.7793C40.175 71.4089 39.9821 70.6898 39.863 69.9269C39.809 69.5809 40.3824 69.4525 40.5689 69.7489C40.6967 69.952 40.84 70.1505 40.9998 70.3344C41.8367 71.2977 42.8921 72.4214 43.1537 71.5385C43.3537 71.0769 43.6152 70.8863 43.6152 69.9231Z" fill="#9C7F65"/></g>
+      </symbol>
+
+      <symbol id="icon-tree-single" viewBox="50 39 18 27">
+        <use href="#trees-full" width="120" height="98"/>
+      </symbol>
+
+      <pattern id="forestPattern" width="120" height="98" patternUnits="userSpaceOnUse">
+        <use href="#trees-full" width="120" height="98"/>
+      </pattern>
+      <pattern id="pondPattern" width="20" height="18" patternUnits="userSpaceOnUse">
+        <rect width="20" height="18" fill="#69c7c2"/>
+        <use href="#pond-dots" width="20" height="18"/>
+      </pattern>
+
+      <filter id="goo" x="-60%" y="-60%" width="220%" height="220%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="b"/>
+        <feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 24 -11" result="g"/>
+      </filter>
+
+      <mask id="forestMask" maskUnits="userSpaceOnUse">
+        <rect id="forestMaskBase" fill="white"/>
+        <path id="terrainForestMask" fill="black"/>
+        <g id="forestMaskShapes" fill="black" stroke="black"></g>
+      </mask>
+      <mask id="pondMask" maskUnits="userSpaceOnUse">
+        <g id="pondMaskGroup" filter="url(#goo)"></g>
+      </mask>
+    </defs>
+
+    <rect id="forestRect" fill="url(#forestPattern)" mask="url(#forestMask)"></rect>
+    <g id="world"></g>
+  </svg>
+  <div id="tintRect"></div>
+
+  <button id="hamburger" class="chrome-btn" aria-label="Menu" aria-haspopup="true" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+
+  <div id="topRight">
+    <button class="tswitch" id="dnToggle" type="button" role="switch" aria-checked="false" aria-label="Day / night">
+      <span class="tknob" id="dnKnob"></span>
     </button>
-    <button class="icon-btn" id="eraserBtn" title="Eraser — click a sticker to remove it">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H9l-6-6a2 2 0 0 1 0-2.83l8-8a2 2 0 0 1 2.83 0l6.17 6.17a2 2 0 0 1 0 2.83L14 18"/><path d="M6.5 12.5 12 18"/></svg>
-    </button>
-    <button class="icon-btn" id="clearBtn" title="Clear all">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-    </button>
-    <div class="divider"></div>
-    <button class="icon-btn" id="themeBtn" title="Toggle day/night mode">
-      <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+    <div class="zoom-pill">
+      <button id="zoomIn" aria-label="Zoom in">+</button>
+      <div class="zoom-div"></div>
+      <button id="zoomOut" aria-label="Zoom out">&minus;</button>
+    </div>
+    <button class="chrome-btn" id="centerBtn" aria-label="Reset view">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="2.4"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>
+      </svg>
     </button>
   </div>
 
-  <details id="mapOptions">
-    <summary>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
-      Advanced map options
-      <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-    </summary>
-    <div class="opts">
-      <div class="opt">
-        <label for="optTerrainType">Terrain type</label>
-        <select id="optTerrainType">
-          <option value="valley" selected>Valley, winding canyon + tributary</option>
-          <option value="island">Island, surrounded by water</option>
-        </select>
-      </div>
-      <div class="opt-group">Noise</div>
-      <div class="opt">
-        <label for="optCell">Cell size <output id="val-cell"></output></label>
-        <input type="range" id="optCell" min="10" max="50" value="28" step="1">
-      </div>
-      <div class="opt">
-        <label for="optScale">Noise scale <output id="val-scale"></output></label>
-        <input type="range" id="optScale" min="0.03" max="0.3" value="0.1" step="0.01">
-      </div>
-      <div class="opt">
-        <label for="optOct">Octaves <output id="val-oct"></output></label>
-        <input type="range" id="optOct" min="1" max="7" value="5" step="1">
-      </div>
-      <div class="opt">
-        <label for="optLac">Lacunarity <output id="val-lac"></output></label>
-        <input type="range" id="optLac" min="1.2" max="3.0" value="2.0" step="0.1">
-      </div>
-      <div class="opt">
-        <label for="optGain">Ridge gain <output id="val-gain"></output></label>
-        <input type="range" id="optGain" min="0.2" max="0.9" value="0.55" step="0.01">
-      </div>
-      <div class="opt-group">Height bands</div>
-      <div class="opt-legend" id="optLegend"></div>
-      <div class="opt">
-        <label for="optT0">Water ↔ Shore <output id="val-t0"></output></label>
-        <input type="range" id="optT0" min="0" max="1" value="0.32" step="0.01">
-      </div>
-      <div class="opt">
-        <label for="optT1">Shore ↔ Fields <output id="val-t1"></output></label>
-        <input type="range" id="optT1" min="0" max="1" value="0.4" step="0.01">
-      </div>
-      <div class="opt">
-        <label for="optT2">Fields ↔ Hills <output id="val-t2"></output></label>
-        <input type="range" id="optT2" min="0" max="1" value="0.64" step="0.01">
-      </div>
-      <div class="opt">
-        <label for="optT3">Hills ↔ Mountains <output id="val-t3"></output></label>
-        <input type="range" id="optT3" min="0" max="1" value="0.8" step="0.01">
-      </div>
-      <div class="opt">
-        <label for="optT4">Mountains ↔ Snow <output id="val-t4"></output></label>
-        <input type="range" id="optT4" min="0" max="1" value="0.94" step="0.01">
-      </div>
-      <div class="opt-group">Grid</div>
-      <div class="opt">
-        <label for="optJitter">Grid jitter <output id="val-jitter"></output></label>
-        <input type="range" id="optJitter" min="0" max="0.8" value="0.35" step="0.01">
-      </div>
-      <label class="opt-check"><input type="checkbox" id="optShowGrid" checked> Show grid lines</label>
-      <div class="opt-buttons">
-        <button type="button" class="primary" id="optRegen">Regenerate</button>
-        <button type="button" id="optSave">Save valley default</button>
-      </div>
-    </div>
-  </details>
+  <div id="toolbar">
+    <button class="tool-btn" data-tool="town" aria-label="Place town" title="Town">
+      <svg class="tool-icon" viewBox="0 0 39 31"><use href="#icon-town"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="tree" aria-label="Place tree" title="Tree">
+      <svg class="tool-icon" viewBox="0 0 18 27"><use href="#icon-tree-single"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="mountain" aria-label="Place mountain" title="Mountain">
+      <svg class="tool-icon" viewBox="0 0 36 21"><use href="#icon-mountain"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="pond" aria-label="Place pond" title="Pond">
+      <svg class="tool-icon" viewBox="0 0 20 18"><use href="#pond-dots"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="landmark" aria-label="Place landmark" title="Landmark">
+      <svg class="tool-icon" viewBox="0 0 26 25"><use href="#icon-landmark"/></svg>
+    </button>
+    <div class="tool-sep"></div>
+    <button class="tool-btn" id="undoBtn" aria-label="Undo" title="Undo (Ctrl/Cmd+Z)" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="erase" id="eraseBtn" aria-label="Erase" title="Erase">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H9l-6-6a2 2 0 0 1 0-2.83l8-8a2 2 0 0 1 2.83 0l6.17 6.17a2 2 0 0 1 0 2.83L14 18"/><path d="M6.5 12.5 12 18"/></svg>
+    </button>
+    <button class="tool-btn" id="downloadBtn" aria-label="Download as PNG" title="Download PNG">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 19h16"/></svg>
+    </button>
+  </div>
 
-  <canvas id="terrain" aria-hidden="true"></canvas>
-  <div id="canvas"></div>
+  <div id="menuScrim"></div>
+  <div id="menuPanel" role="dialog" aria-label="Menu" aria-hidden="true">
+    <button class="menu-close" id="menuClose" aria-label="Close menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <h2>Mossbound</h2>
+    <button class="menu-item" id="menuNew">New map</button>
+    <button class="menu-item" id="menuClearTrees">Thin the forest</button>
+    <button class="menu-item" id="menuAbout">About</button>
+    <details id="mapOptions">
+      <summary>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+        Advanced terrain options
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </summary>
+      <div class="opts">
+        <div class="opt">
+          <label for="optTerrainType">Terrain type</label>
+          <select id="optTerrainType">
+            <option value="valley" selected>Valley, winding canyon + tributary</option>
+            <option value="island">Island, surrounded by water</option>
+          </select>
+        </div>
+        <div class="opt-group">Noise</div>
+        <div class="opt">
+          <label for="optCell">Cell size <output id="val-cell"></output></label>
+          <input type="range" id="optCell" min="10" max="50" value="28" step="1">
+        </div>
+        <div class="opt">
+          <label for="optScale">Noise scale <output id="val-scale"></output></label>
+          <input type="range" id="optScale" min="0.03" max="0.3" value="0.1" step="0.01">
+        </div>
+        <div class="opt">
+          <label for="optOct">Octaves <output id="val-oct"></output></label>
+          <input type="range" id="optOct" min="1" max="7" value="5" step="1">
+        </div>
+        <div class="opt">
+          <label for="optLac">Lacunarity <output id="val-lac"></output></label>
+          <input type="range" id="optLac" min="1.2" max="3.0" value="2.0" step="0.1">
+        </div>
+        <div class="opt">
+          <label for="optGain">Ridge gain <output id="val-gain"></output></label>
+          <input type="range" id="optGain" min="0.2" max="0.9" value="0.55" step="0.01">
+        </div>
+        <div class="opt-group">Height bands</div>
+        <div class="opt-legend" id="optLegend"></div>
+        <div class="opt">
+          <label for="optT0">Water ↔ Shore <output id="val-t0"></output></label>
+          <input type="range" id="optT0" min="0" max="1" value="0.32" step="0.01">
+        </div>
+        <div class="opt">
+          <label for="optT1">Shore ↔ Fields <output id="val-t1"></output></label>
+          <input type="range" id="optT1" min="0" max="1" value="0.4" step="0.01">
+        </div>
+        <div class="opt">
+          <label for="optT2">Fields ↔ Hills <output id="val-t2"></output></label>
+          <input type="range" id="optT2" min="0" max="1" value="0.64" step="0.01">
+        </div>
+        <div class="opt">
+          <label for="optT3">Hills ↔ Mountains <output id="val-t3"></output></label>
+          <input type="range" id="optT3" min="0" max="1" value="0.8" step="0.01">
+        </div>
+        <div class="opt">
+          <label for="optT4">Mountains ↔ Snow <output id="val-t4"></output></label>
+          <input type="range" id="optT4" min="0" max="1" value="0.94" step="0.01">
+        </div>
+        <div class="opt-group">Grid</div>
+        <div class="opt">
+          <label for="optJitter">Grid jitter <output id="val-jitter"></output></label>
+          <input type="range" id="optJitter" min="0" max="0.8" value="0.35" step="0.01">
+        </div>
+        <label class="opt-check"><input type="checkbox" id="optShowGrid" checked> Show grid lines</label>
+        <div class="opt-buttons">
+          <button type="button" class="primary" id="optRegen">Regenerate</button>
+          <button type="button" id="optSave">Save valley default</button>
+        </div>
+      </div>
+    </details>
+  </div>
+</div>
 
 <script type="module" src="/src/firebase.js"></script>
 <script>
 (function () {
-  var canvas = document.getElementById('canvas');
-  var undoBtn = document.getElementById('undoBtn');
-  var eraserBtn = document.getElementById('eraserBtn');
-  var clearBtn = document.getElementById('clearBtn');
-  var themeBtn = document.getElementById('themeBtn');
-  var themeIcon = document.getElementById('themeIcon');
-
-  var activeStamp = null;
-  var eraserActive = false;
-  var stamps = [];
-  var selectedEl = null;
-  var idCounter = 0;
-
-  function stampCursor(char) {
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40">' +
-      '<text x="20" y="27" font-size="30" text-anchor="middle">' + char + '</text></svg>';
-    var url = 'data:image/svg+xml,' + encodeURIComponent(svg);
-    return 'url("' + url + '") 20 20, crosshair';
-  }
-
-  var eraserCursorUrl = (function () {
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">' +
-      '<g transform="translate(4,10) rotate(-40 10 8)">' +
-      '<rect x="0" y="0" width="20" height="12" rx="2" fill="#FF8FA3" stroke="#8A2540" stroke-width="1.5"/>' +
-      '<rect x="0" y="0" width="20" height="6" rx="2" fill="#FFC2CE" stroke="#8A2540" stroke-width="1.5"/>' +
-      '</g></svg>';
-    return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '") 6 26, cell';
-  })();
-  document.documentElement.style.setProperty('--eraser-cur', eraserCursorUrl);
-
-  function setArmed(char, btn) {
-    if (activeStamp === char) {
-      disarm();
-      return;
-    }
-    activeStamp = char;
-    eraserActive = false;
-    canvas.classList.remove('erasing');
-    canvas.style.cursor = stampCursor(char);
-    document.querySelectorAll('.stamp-btn').forEach(function (b) { b.classList.remove('active'); });
-    eraserBtn.classList.remove('active');
-    btn.classList.add('active');
-    deselect();
-  }
-
-  function setEraser() {
-    if (eraserActive) {
-      disarm();
-      return;
-    }
-    activeStamp = null;
-    eraserActive = true;
-    canvas.classList.add('erasing');
-    document.querySelectorAll('.stamp-btn').forEach(function (b) { b.classList.remove('active'); });
-    eraserBtn.classList.add('active');
-    deselect();
-  }
-
-  function disarm() {
-    activeStamp = null;
-    eraserActive = false;
-    canvas.style.cursor = 'default';
-    canvas.classList.remove('erasing');
-    document.querySelectorAll('.stamp-btn').forEach(function (b) { b.classList.remove('active'); });
-    eraserBtn.classList.remove('active');
-  }
-
-  document.querySelectorAll('.stamp-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      setArmed(btn.getAttribute('data-stamp'), btn);
-    });
-  });
-
-  eraserBtn.addEventListener('click', setEraser);
-
-  function deselect() {
-    if (selectedEl) selectedEl.classList.remove('selected');
-    selectedEl = null;
-  }
-
-  function select(el) {
-    deselect();
-    selectedEl = el;
-    el.classList.add('selected');
-  }
-
-  function placeStamp(x, y) {
-    deselect();
-    var id = 'stamp-' + (idCounter++);
-    var rotation = (Math.random() * 24 - 12).toFixed(1);
-    var record = { id: id, char: activeStamp, x: x, y: y, r: rotation };
-    stamps.push(record);
-    renderStamp(record);
-    undoBtn.disabled = false;
-  }
-
-  function renderStamp(record) {
-    var el = document.createElement('div');
-    el.className = 'stamp';
-    el.id = record.id;
-    el.style.left = record.x + 'px';
-    el.style.top = record.y + 'px';
-    el.style.setProperty('--r', record.r + 'deg');
-    el.textContent = record.char;
-
-    var del = document.createElement('div');
-    del.className = 'delete-x';
-    del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>';
-    del.addEventListener('click', function (e) {
-      e.stopPropagation();
-      removeStamp(record.id);
-    });
-    el.appendChild(del);
-
-    canvas.appendChild(el);
-    attachDrag(el, record);
-  }
-
-  function removeStamp(id) {
-    stamps = stamps.filter(function (s) { return s.id !== id; });
-    var el = document.getElementById(id);
-    if (el) el.remove();
-    if (selectedEl && selectedEl.id === id) selectedEl = null;
-    undoBtn.disabled = stamps.length === 0;
-  }
-
-  function attachDrag(el, record) {
-    var dragging = false;
-    var offsetX = 0, offsetY = 0;
-
-    el.addEventListener('click', function (e) {
-      e.stopPropagation();
-    });
-
-    el.addEventListener('pointerdown', function (e) {
-      if (e.target.closest('.delete-x')) return;
-      if (eraserActive) return;
-      e.stopPropagation();
-      select(el);
-      dragging = true;
-      el.classList.add('dragging');
-      el.setPointerCapture(e.pointerId);
-      var rect = canvas.getBoundingClientRect();
-      offsetX = (e.clientX - rect.left) - record.x;
-      offsetY = (e.clientY - rect.top) - record.y;
-    });
-
-    el.addEventListener('pointermove', function (e) {
-      if (!dragging) return;
-      var rect = canvas.getBoundingClientRect();
-      record.x = (e.clientX - rect.left) - offsetX;
-      record.y = (e.clientY - rect.top) - offsetY;
-      el.style.left = record.x + 'px';
-      el.style.top = record.y + 'px';
-    });
-
-    function endDrag() {
-      if (!dragging) return;
-      dragging = false;
-      el.classList.remove('dragging');
-    }
-    el.addEventListener('pointerup', endDrag);
-    el.addEventListener('pointercancel', endDrag);
-  }
-
-  canvas.addEventListener('click', function (e) {
-    if (!activeStamp) {
-      deselect();
-      return;
-    }
-    var rect = canvas.getBoundingClientRect();
-    var x = e.clientX - rect.left;
-    var y = e.clientY - rect.top;
-    placeStamp(x, y);
-  });
-
-  var erasingDrag = false;
-
-  function eraseAtPoint(clientX, clientY) {
-    var el = document.elementFromPoint(clientX, clientY);
-    var stampEl = el && el.closest ? el.closest('.stamp') : null;
-    if (stampEl) removeStamp(stampEl.id);
-  }
-
-  canvas.addEventListener('pointerdown', function (e) {
-    if (!eraserActive) return;
-    erasingDrag = true;
-    eraseAtPoint(e.clientX, e.clientY);
-  });
-
-  document.addEventListener('pointermove', function (e) {
-    if (!erasingDrag) return;
-    eraseAtPoint(e.clientX, e.clientY);
-  });
-
-  document.addEventListener('pointerup', function () {
-    erasingDrag = false;
-  });
-
-  undoBtn.addEventListener('click', function () {
-    if (!stamps.length) return;
-    var last = stamps[stamps.length - 1];
-    removeStamp(last.id);
-  });
-
-  clearBtn.addEventListener('click', function () {
-    stamps.forEach(function (s) {
-      var el = document.getElementById(s.id);
-      if (el) el.remove();
-    });
-    stamps = [];
-    selectedEl = null;
-    undoBtn.disabled = true;
-  });
-
-  document.addEventListener('keydown', function (e) {
-    var mod = e.metaKey || e.ctrlKey;
-    if (mod && e.key.toLowerCase() === 'z') {
-      e.preventDefault();
-      undoBtn.click();
-      return;
-    }
-    if (e.key === 'Escape') {
-      disarm();
-      deselect();
-      return;
-    }
-    if ((e.key === 'Backspace' || e.key === 'Delete') && selectedEl) {
-      removeStamp(selectedEl.id);
-    }
-  });
-
-  var moonPath = '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z"/>';
-  var sunPath = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>';
-
-  function setTheme(dark) {
-    document.body.classList.toggle('dark', dark);
-    themeIcon.innerHTML = dark ? moonPath : sunPath;
-    themeBtn.title = dark ? 'Switch to day mode' : 'Switch to night mode';
-    if (activeStamp) canvas.style.cursor = stampCursor(activeStamp);
-  }
-
-  var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-  setTheme(prefersDark);
-
-  themeBtn.addEventListener('click', function () {
-    setTheme(!document.body.classList.contains('dark'));
-  });
-
-  undoBtn.disabled = true;
-})();
-</script>
-<script>
-(function () {
   // Ridged-multifractal terrain background, ported from the "Ridged Terrain
-  // Map" sketch. Draws a full-viewport map into #terrain, behind the stamp
-  // canvas. Every parameter lives in the collapsible #mapOptions panel; the
-  // seed only changes on Regenerate, so tweaking a slider, resizing or
-  // toggling the theme reshapes the same map rather than rolling a new one.
+  // Map" sketch. Draws into #terrain, underneath the terrain builder's SVG.
+  // Every parameter lives in the collapsible advanced options in the menu;
+  // the seed only changes on Regenerate / New map, so tweaking a slider or
+  // resizing reshapes the same map rather than rolling a new one.
+  //
+  // The terrain covers more than the viewport (EXTENT below) so the builder
+  // can zoom out and pan without exposing an edge; window.MossTerrain lets
+  // the builder keep the two layers in step.
 
   const els = {
     terrainType: document.getElementById('optTerrainType'),
@@ -836,17 +758,43 @@
     return { points, cols, rows };
   }
 
+  const ground = document.getElementById('ground');
   const canvas = document.getElementById('terrain');
   const ctx = canvas.getContext('2d');
   const legendEl = document.getElementById('optLegend');
   let seed = Math.floor(Math.random() * 1e9);
 
+  // must match the builder's zoom-out limit and pan margin
+  const MIN_ZOOM = 0.6, PAN_MARGIN = 160;
+  const MAX_PIXELS = 16e6;
+  let ext = { x: 0, y: 0, w: 0, h: 0 }, dpr = 1;
+  let view = { zoom: 1, panX: 0, panY: 0 };
+  const waterListeners = [];
+
+  function measure() {
+    const w = window.innerWidth, h = window.innerHeight;
+    const ex = Math.ceil(w / (2 * MIN_ZOOM) - w / 2 + PAN_MARGIN);
+    const ey = Math.ceil(h / (2 * MIN_ZOOM) - h / 2 + PAN_MARGIN);
+    ext = { x: -ex, y: -ey, w: w + 2 * ex, h: h + 2 * ey };
+    dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_PIXELS / (ext.w * ext.h)));
+    ground.style.left = ext.x + 'px';
+    ground.style.top = ext.y + 'px';
+    ground.style.width = ext.w + 'px';
+    ground.style.height = ext.h + 'px';
+    ground.style.transformOrigin = (ex + w / 2) + 'px ' + (ey + h / 2) + 'px';
+    applyView();
+  }
+
+  // mirrors the builder's viewBox math: a map point x lands on screen at
+  // (x + panX - W/2) * zoom + W/2
+  function applyView() {
+    ground.style.transform = 'scale(' + view.zoom + ') translate(' + view.panX + 'px,' + view.panY + 'px)';
+  }
+
   function draw() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
+    const w = ext.w, h = ext.h;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const s = currentSettings();
@@ -860,7 +808,11 @@
     const { points, cols, rows } = generateGrid(w, h, s.cell, s.jitter, perlinJX, perlinJY);
     const path = terrainType === 'valley' ? makeValleyPath(cols, rows, seed) : null;
 
-    // fill each cell once, sampled at its unjittered center
+    // fill each cell once, sampled at its unjittered center; water and snow
+    // cells are also collected (in map coordinates) so the builder can keep
+    // its forest off them
+    const noTrees = [];
+    const r1 = (v) => Math.round(v * 10) / 10;
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
         const rawH = ridged((i + 0.5) * s.scale, (j + 0.5) * s.scale);
@@ -869,6 +821,9 @@
 
         const p00 = points[j][i], p10 = points[j][i + 1];
         const p11 = points[j + 1][i + 1], p01 = points[j + 1][i];
+        if (band.name === 'Water' || band.name === 'Snow') {
+          noTrees.push('M' + [p00, p10, p11, p01].map((p) => r1(p.x + ext.x) + ' ' + r1(p.y + ext.y)).join('L') + 'Z');
+        }
         ctx.beginPath();
         ctx.moveTo(p00.x, p00.y);
         ctx.lineTo(p10.x, p10.y);
@@ -880,7 +835,7 @@
     }
 
     if (s.showGrid) {
-      ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--ink').trim() || '#2A2823';
+      ctx.strokeStyle = '#2A2823';
       ctx.globalAlpha = 0.22;
       ctx.lineWidth = 1;
       ctx.lineJoin = 'round';
@@ -896,6 +851,9 @@
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+
+    const d = noTrees.join('');
+    waterListeners.forEach((fn) => fn(d));
 
     // legend reads high-to-low, Snow at top
     legendEl.innerHTML = bands.slice().reverse().map((b) =>
@@ -941,14 +899,1103 @@
     saveTimer = setTimeout(updateSaveLabel, 1600);
   });
 
-  window.addEventListener('resize', scheduleDraw);
-  // grid lines follow the day/night theme, which toggles a class on <body>
-  new MutationObserver(scheduleDraw).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  window.addEventListener('resize', () => { measure(); scheduleDraw(); });
+
+  window.MossTerrain = {
+    extent: () => Object.assign({}, ext),
+    setView(zoom, panX, panY) { view = { zoom, panX, panY }; applyView(); },
+    regenerate() { seed = Math.floor(Math.random() * 1e9); scheduleDraw(); },
+    onWaterChange(fn) { waterListeners.push(fn); fn(lastWater); },
+    // paint the on-screen map area (0,0)-(W,H) into another context, for PNG export
+    drawWorld(target, outW, outH) {
+      target.drawImage(canvas, -ext.x * dpr, -ext.y * dpr, window.innerWidth * dpr, window.innerHeight * dpr, 0, 0, outW, outH);
+    },
+  };
+  let lastWater = '';
+  waterListeners.push((d) => { lastWater = d; });
 
   applyPreset(els.terrainType.value);
   updateSaveLabel();
   syncReadouts();
+  measure();
   draw();
+})();
+</script>
+<script>
+(function(){
+  "use strict";
+  // the map's coordinate space is the viewport itself (1 unit = 1 css px at
+  // zoom 1), so it lines up with the terrain background drawn underneath
+  var W = window.innerWidth, H = window.innerHeight;
+  var svg = document.getElementById('map');
+  var world = document.getElementById('world');
+  var forestMaskShapes = document.getElementById('forestMaskShapes');
+  var pondMaskGroup = document.getElementById('pondMaskGroup');
+
+  function prand(seed){
+    var s = Math.sin(seed * 127.1) * 43758.5453;
+    return s - Math.floor(s);
+  }
+  var uid = 1;
+
+  function randSeed(){ return Math.random()*1000; }
+  // starter layout, authored on a 1200x800 board and scaled to the viewport
+  function defaultFeatures(){
+    function sx(v){ return v * W / 1200; }
+    function sy(v){ return v * H / 800; }
+    return [
+      { id: uid++, type:'mountain', x:sx(260), y:sy(150), seed: randSeed() },
+      { id: uid++, type:'pond',     x:sx(420), y:sy(290), r:60, seed: randSeed() },
+      { id: uid++, type:'town',     x:sx(350), y:sy(195), seed: randSeed() },
+      { id: uid++, type:'town',     x:sx(760), y:sy(330), seed: randSeed() },
+      { id: uid++, type:'town',     x:sx(430), y:sy(600), seed: randSeed() },
+      { id: uid++, type:'landmark', x:sx(250), y:sy(610), seed: randSeed() }
+    ];
+  }
+
+  var state = { features: defaultFeatures(), history: [], mode: null, zoom: 1, panX: 0, panY: 0, pathSeeds: {} };
+
+  function snapshot(){ return JSON.parse(JSON.stringify({ features: state.features, pathSeeds: state.pathSeeds })); }
+  function pushHistory(){
+    state.history.push(snapshot());
+    if (state.history.length > 40) state.history.shift();
+    updateUndoBtn();
+  }
+  function undo(){
+    if (!state.history.length) return;
+    var prev = state.history.pop();
+    state.features = prev.features;
+    state.pathSeeds = prev.pathSeeds || {};
+    updateUndoBtn();
+    render();
+  }
+
+  // per-edge seed overrides, set when a path is clicked to re-roll its shape —
+  // falls back to the deterministic endpoint-derived seed until then
+  function pathSeed(key, baseSeed){
+    return state.pathSeeds[key] != null ? state.pathSeeds[key] : baseSeed;
+  }
+  function rerollPath(key){
+    pushHistory();
+    state.pathSeeds[key] = randSeed();
+    render();
+  }
+  function updateUndoBtn(){ document.getElementById('undoBtn').disabled = state.history.length === 0; }
+
+  /* ---------------- curve + geometry helpers ---------------- */
+  function curvePath(p1, p2, strength, seedExtra){
+    var dx = p2.x-p1.x, dy = p2.y-p1.y;
+    var len = Math.hypot(dx,dy) || 1;
+    var nx = -dy/len, ny = dx/len;
+    var seed = p1.x*13.1 + p1.y*7.7 + p2.x*3.3 + p2.y*19.9 + (seedExtra||0);
+    var r = (prand(seed) - 0.5) * 2;
+    var mx = (p1.x+p2.x)/2 + nx * r * len * strength;
+    var my = (p1.y+p2.y)/2 + ny * r * len * strength;
+    return { p1:p1, p2:p2, mid:{x:mx,y:my} };
+  }
+  function samplePoints(c, steps){
+    var pts = [];
+    for (var i=0;i<=steps;i++){
+      var t = i/steps;
+      var x = (1-t)*(1-t)*c.p1.x + 2*(1-t)*t*c.mid.x + t*t*c.p2.x;
+      var y = (1-t)*(1-t)*c.p1.y + 2*(1-t)*t*c.mid.y + t*t*c.p2.y;
+      pts.push({x:x,y:y});
+    }
+    return pts;
+  }
+  function curveD(c){ return 'M '+c.p1.x+' '+c.p1.y+' Q '+c.mid.x+' '+c.mid.y+' '+c.p2.x+' '+c.p2.y; }
+
+  // open Catmull-Rom spline through pts, rendered as cubic beziers — smooth, not jagged
+  function catmullRomOpen(pts, tension){
+    tension = tension || 1;
+    var n = pts.length;
+    if (n < 3) return 'M '+pts[0].x+' '+pts[0].y+' L '+pts[n-1].x+' '+pts[n-1].y;
+    var d = 'M '+pts[0].x+' '+pts[0].y+' ';
+    for (var i=0;i<n-1;i++){
+      var p0 = i===0 ? pts[0] : pts[i-1];
+      var p1 = pts[i], p2 = pts[i+1];
+      var p3 = i+2<n ? pts[i+2] : p2;
+      var c1x = p1.x + (p2.x-p0.x)/6*tension, c1y = p1.y + (p2.y-p0.y)/6*tension;
+      var c2x = p2.x - (p3.x-p1.x)/6*tension, c2y = p2.y - (p3.y-p1.y)/6*tension;
+      d += 'C '+c1x+' '+c1y+' '+c2x+' '+c2y+' '+p2.x+' '+p2.y+' ';
+    }
+    return d;
+  }
+  // meandering waypoints between two points — a real river snakes with a few
+  // full bends, not one gentle arc
+  function riverPoints(p1, p2, segments, amplitude, seedExtra){
+    var dx=p2.x-p1.x, dy=p2.y-p1.y, len=Math.hypot(dx,dy)||1;
+    var ux=dx/len, uy=dy/len, nx=-uy, ny=ux;
+    var phase = prand(seedExtra*3.1+1) * Math.PI*2;
+    var freq = 1.3 + prand(seedExtra*7.3+2) * 1.1;
+    var pts = [p1];
+    for (var i=1;i<segments;i++){
+      var t = i/segments;
+      var bx = p1.x+dx*t, by = p1.y+dy*t;
+      var taper = Math.sin(Math.PI*t); // meet both endpoints exactly
+      var wobble = Math.sin(t*Math.PI*2*freq + phase);
+      var jitter = (prand(seedExtra*13.7 + i*5.3) - 0.5) * 0.5;
+      var off = (wobble + jitter) * amplitude * taper;
+      pts.push({ x: bx+nx*off, y: by+ny*off });
+    }
+    pts.push(p2);
+    return pts;
+  }
+
+  /* jagged polyline for roads/spurs — real trails have irregular kinks, not one smooth arc */
+  function jaggedPath(p1, p2, segments, jitter, seedExtra){
+    var pts = [p1];
+    var dx = p2.x-p1.x, dy = p2.y-p1.y;
+    var len = Math.hypot(dx,dy) || 1;
+    var nx = -dy/len, ny = dx/len;
+    for (var i=1;i<segments;i++){
+      var t = i/segments;
+      var bx = p1.x + dx*t, by = p1.y + dy*t;
+      var seed = p1.x*13.1 + p1.y*7.7 + p2.x*3.3 + p2.y*19.9 + (seedExtra||0) + i*11.37;
+      var r = (prand(seed) - 0.5) * 2;
+      var taper = Math.sin(Math.PI * t); // ease jitter to zero at both endpoints
+      var off = r * jitter * taper;
+      pts.push({ x: bx + nx*off, y: by + ny*off });
+    }
+    pts.push(p2);
+    return pts;
+  }
+  function polyD(pts){
+    var d = 'M '+pts[0].x+' '+pts[0].y;
+    for (var i=1;i<pts.length;i++) d += ' L '+pts[i].x+' '+pts[i].y;
+    return d;
+  }
+
+  function pointToSegmentDist(p, a, b){
+    var dx=b.x-a.x, dy=b.y-a.y;
+    var len2 = dx*dx+dy*dy;
+    if (len2<1e-6) return Math.hypot(p.x-a.x,p.y-a.y);
+    var t = ((p.x-a.x)*dx+(p.y-a.y)*dy)/len2;
+    t = Math.max(0,Math.min(1,t));
+    var cx=a.x+t*dx, cy=a.y+t*dy;
+    return Math.hypot(p.x-cx,p.y-cy);
+  }
+
+  // waypoints that detour around any pond the direct a->b line would cut through
+  function routeAroundPonds(a, b, ponds){
+    var blocking = [];
+    ponds.forEach(function(p){
+      var r = (p.r||55) + 18;
+      if (pointToSegmentDist(p, a, b) < r) blocking.push({ p:p, r:r });
+    });
+    if (!blocking.length) return [a, b];
+    var dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy)||1;
+    var ux=dx/len, uy=dy/len, nx=-uy, ny=ux;
+    blocking.forEach(function(bl){ bl.t = (bl.p.x-a.x)*ux + (bl.p.y-a.y)*uy; });
+    blocking.sort(function(x,y){ return x.t-y.t; });
+    var pts = [a];
+    blocking.forEach(function(bl){
+      var side = ((bl.p.x-a.x)*nx + (bl.p.y-a.y)*ny) >= 0 ? -1 : 1; // go around the side with less line already on it
+      var tEntry = bl.t - bl.r*1.25, tExit = bl.t + bl.r*1.25;
+      pts.push({ x: a.x + ux*tEntry + nx*bl.r*side, y: a.y + uy*tEntry + ny*bl.r*side });
+      pts.push({ x: a.x + ux*tExit  + nx*bl.r*side, y: a.y + uy*tExit  + ny*bl.r*side });
+    });
+    pts.push(b);
+    return pts;
+  }
+
+  function buildRoutePts(a, b, segs, amp, seedExtra, ponds){
+    var waypoints = routeAroundPonds(a, b, ponds);
+    if (waypoints.length === 2) return riverPoints(a, b, segs, amp, seedExtra);
+    var out = [waypoints[0]];
+    for (var i=0;i<waypoints.length-1;i++){
+      var legSegs = Math.max(3, Math.round(segs / (waypoints.length-1)));
+      var legAmp = i===0 || i===waypoints.length-2 ? amp*0.7 : amp*0.35;
+      var leg = riverPoints(waypoints[i], waypoints[i+1], legSegs, legAmp, seedExtra + i*7);
+      out = out.concat(leg.slice(1));
+    }
+    return out;
+  }
+
+  // final safety pass: push any point that still ends up inside a pond back out to its edge
+  function nudgeOutOfPonds(pts, ponds, buffer){
+    for (var i=1;i<pts.length-1;i++){
+      ponds.forEach(function(p){
+        var r = (p.r||55) + buffer;
+        var dx = pts[i].x-p.x, dy = pts[i].y-p.y;
+        var d = Math.hypot(dx,dy);
+        if (d < r){
+          var ux = d>0.1 ? dx/d : 1, uy = d>0.1 ? dy/d : 0;
+          pts[i].x = p.x + ux*r;
+          pts[i].y = p.y + uy*r;
+        }
+      });
+    }
+  }
+
+  function segIntersect(a1,a2,b1,b2){
+    var d = (a2.x-a1.x)*(b2.y-b1.y) - (a2.y-a1.y)*(b2.x-b1.x);
+    if (Math.abs(d) < 1e-9) return null;
+    var t = ((b1.x-a1.x)*(b2.y-b1.y) - (b1.y-a1.y)*(b2.x-b1.x))/d;
+    var u = ((b1.x-a1.x)*(a2.y-a1.y) - (b1.y-a1.y)*(a2.x-a1.x))/d;
+    if (t>=0 && t<=1 && u>=0 && u<=1){
+      return { x:a1.x+t*(a2.x-a1.x), y:a1.y+t*(a2.y-a1.y), angle: Math.atan2(a2.y-a1.y, a2.x-a1.x)*180/Math.PI };
+    }
+    return null;
+  }
+  // closed Catmull-Rom spline through pts, rendered as cubic beziers
+  function catmullRomClosed(pts, tension){
+    tension = tension || 1;
+    var n = pts.length;
+    var d = 'M '+pts[0].x+' '+pts[0].y+' ';
+    for (var i=0;i<n;i++){
+      var p0 = pts[(i-1+n)%n], p1 = pts[i], p2 = pts[(i+1)%n], p3 = pts[(i+2)%n];
+      var c1x = p1.x + (p2.x-p0.x)/6*tension, c1y = p1.y + (p2.y-p0.y)/6*tension;
+      var c2x = p2.x - (p3.x-p1.x)/6*tension, c2y = p2.y - (p3.y-p1.y)/6*tension;
+      d += 'C '+c1x+' '+c1y+' '+c2x+' '+c2y+' '+p2.x+' '+p2.y+' ';
+    }
+    return d + 'Z';
+  }
+  // an organic bean-ish blob instead of a perfect circle, stable per pond via its id
+  function pondBlobPath(cx, cy, r, seed){
+    var N = 10;
+    var pts = [];
+    for (var i=0;i<N;i++){
+      var angle = (i/N) * Math.PI * 2;
+      var jitter = 0.72 + prand(seed*3.7 + i*12.9) * 0.56; // ~0.72–1.28x radius
+      var rad = r * jitter;
+      pts.push({ x: cx + Math.cos(angle)*rad, y: cy + Math.sin(angle)*rad });
+    }
+    return catmullRomClosed(pts, 1);
+  }
+
+  function nearestPointOnList(pt, list){
+    var best = null, bd = Infinity;
+    for (var i=0;i<list.length;i++){
+      var d = Math.hypot(pt.x-list[i].x, pt.y-list[i].y);
+      if (d < bd){ bd = d; best = list[i]; }
+    }
+    return { pt:best, dist:bd };
+  }
+
+  var ICON_HALF = { town:{w:19.5,h:15.5}, mountain:{w:18,h:10.5}, landmark:{w:13,h:12.5} };
+  var CLEAR_R = { town:78, mountain:70, landmark:42, tree:24 };
+  var HIT_R = { town:52, mountain:45, pond:0, landmark:26, tree:20 };
+
+  // non-pond objects can't sit on water — push a point out to just past the
+  // shore of any lake it lands in
+  function keepOutOfPonds(pt, buffer){
+    var p = { x: pt.x, y: pt.y };
+    state.features.forEach(function(pd){
+      if (pd.type !== 'pond') return;
+      var dx = p.x-pd.x, dy = p.y-pd.y;
+      var d = Math.hypot(dx,dy);
+      var r = (pd.r||55) + buffer;
+      if (d < r){
+        var ux = d>0.1 ? dx/d : 1, uy = d>0.1 ? dy/d : 0;
+        p.x = pd.x + ux*r;
+        p.y = pd.y + uy*r;
+      }
+    });
+    return p;
+  }
+  // dropping a new lake (or dragging one) onto other objects pushes them out
+  // from under it rather than letting them sit underwater
+  function displaceFromPond(pond){
+    state.features.forEach(function(f){
+      if (f === pond || f.type === 'pond') return;
+      var dx = f.x-pond.x, dy = f.y-pond.y;
+      var d = Math.hypot(dx,dy);
+      var r = (pond.r||55) + 20;
+      if (d < r){
+        var ux = d>0.1 ? dx/d : 1, uy = d>0.1 ? dy/d : 0;
+        f.x = Math.max(10, Math.min(W-10, pond.x + ux*r));
+        f.y = Math.max(10, Math.min(H-10, pond.y + uy*r));
+      }
+    });
+  }
+
+  function mst(nodes){
+    var edges = [];
+    if (nodes.length < 2) return edges;
+    var inTree = [0], remaining = nodes.map(function(_,i){return i;}).slice(1);
+    while (remaining.length){
+      var best=null, bestDist=Infinity, bestIdx=-1;
+      for (var i=0;i<inTree.length;i++){
+        for (var j=0;j<remaining.length;j++){
+          var a=nodes[inTree[i]], b=nodes[remaining[j]];
+          var d=Math.hypot(a.x-b.x,a.y-b.y);
+          if (d<bestDist){ bestDist=d; best={a:inTree[i],b:remaining[j]}; bestIdx=j; }
+        }
+      }
+      edges.push([best.a, best.b]);
+      inTree.push(remaining[bestIdx]);
+      remaining.splice(bestIdx,1);
+    }
+    return edges;
+  }
+  function edgeKey(i,j){ return i<j ? i+'-'+j : j+'-'+i; }
+
+  // true when every point sits within `thresh` units of the set's best-fit line —
+  // used to skip redundant roads when towns are strung out in a row
+  function isRoughlyCollinear(pts, thresh){
+    if (pts.length < 3) return true;
+    var n = pts.length, mx=0, my=0;
+    pts.forEach(function(p){ mx+=p.x; my+=p.y; });
+    mx/=n; my/=n;
+    var sxx=0, syy=0, sxy=0;
+    pts.forEach(function(p){
+      var dx=p.x-mx, dy=p.y-my;
+      sxx+=dx*dx; syy+=dy*dy; sxy+=dx*dy;
+    });
+    var theta = 0.5*Math.atan2(2*sxy, sxx-syy);
+    var mnx = -Math.sin(theta), mny = Math.cos(theta); // minor-axis direction
+    var maxDev = 0;
+    pts.forEach(function(p){
+      var dx=p.x-mx, dy=p.y-my;
+      var dev = Math.abs(dx*mnx + dy*mny);
+      if (dev > maxDev) maxDev = dev;
+    });
+    return maxDev < thresh;
+  }
+
+  /* ---------------- render ---------------- */
+  function render(){
+    var mountains = state.features.filter(function(f){return f.type==='mountain';});
+    var ponds     = state.features.filter(function(f){return f.type==='pond';});
+    var towns     = state.features.filter(function(f){return f.type==='town';});
+    var landmarks = state.features.filter(function(f){return f.type==='landmark';});
+    var placedTrees = state.features.filter(function(f){return f.type==='tree';});
+
+    var riverCurves = [], riverSamples = [];
+    mountains.forEach(function(m, mi){
+      if (!ponds.length) return;
+      var nearest=ponds[0], nd=Infinity;
+      ponds.forEach(function(p){ var d=Math.hypot(m.x-p.x,m.y-p.y); if (d<nd){nd=d; nearest=p;} });
+      var len = Math.hypot(m.x-nearest.x, m.y-nearest.y);
+      var segs = Math.max(8, Math.min(16, Math.round(len/45)));
+      var amp = Math.max(16, Math.min(46, len*0.11));
+      var key = 'river-'+edgeKey(m.id, nearest.id);
+      var pts = riverPoints(m, nearest, segs, amp, pathSeed(key, (m.seed||m.id) + (nearest.seed||nearest.id)));
+      riverCurves.push({ pts: pts, key: key });
+      riverSamples = riverSamples.concat(pts);
+    });
+
+    // rivers between separate lakes too, so a chain of ponds reads as one
+    // connected watershed — skip pairs already merged into a single blob
+    if (ponds.length > 1){
+      var pondIdxEdges = mst(ponds);
+      pondIdxEdges.forEach(function(e, pi){
+        var a = ponds[e[0]], b = ponds[e[1]];
+        var d = Math.hypot(a.x-b.x, a.y-b.y);
+        if (d < (a.r||55) + (b.r||55) + 10) return; // already visually one lake
+        var segs = Math.max(8, Math.min(16, Math.round(d/45)));
+        var amp = Math.max(14, Math.min(40, d*0.1));
+        var key = 'river-'+edgeKey(a.id, b.id);
+        var pts = riverPoints(a, b, segs, amp, pathSeed(key, (a.seed||a.id) + (b.seed||b.id)));
+        riverCurves.push({ pts: pts, key: key });
+        riverSamples = riverSamples.concat(pts);
+      });
+    }
+
+    // when several mountains (or lakes) drain toward the same water, their
+    // rivers can start out nearly parallel and overlap into what reads as a
+    // single river — pull them apart so each stays visible as its own strand
+    if (riverCurves.length > 1){
+      var riverPtsList = riverCurves.map(function(c){ return c.pts; });
+      separateAllPaths(riverPtsList, 22, 3);
+      riverPtsList.forEach(function(p){ nudgeOutOfPonds(p, ponds, 14); });
+      riverSamples = [];
+      riverPtsList.forEach(function(p){ riverSamples = riverSamples.concat(p); });
+    }
+
+    // roads: spanning tree (guarantees every town reachable) unioned with each
+    // town's 2 nearest neighbors, so well-clustered towns pick up several
+    // redundant routes while isolated ones stay lightly connected.
+    var roadIdxEdges = mst(towns);
+    var treeEdgeCount = roadIdxEdges.length;
+    var edgeSet = {};
+    roadIdxEdges.forEach(function(e){ edgeSet[edgeKey(e[0],e[1])] = true; });
+    if (towns.length > 2 && !isRoughlyCollinear(towns, 40)){
+      towns.forEach(function(t,i){
+        var dists = [];
+        towns.forEach(function(t2,j){
+          if (i===j) return;
+          dists.push({ j:j, d: Math.hypot(t.x-t2.x,t.y-t2.y) });
+        });
+        dists.sort(function(a,b){ return a.d-b.d; });
+        var k = Math.min(2, dists.length);
+        for (var n=0;n<k;n++){
+          var nj = dists[n].j;
+          if (!edgeSet[edgeKey(i,nj)]){
+            edgeSet[edgeKey(i,nj)] = true;
+            roadIdxEdges.push([i,nj]);
+          }
+        }
+      });
+    }
+
+    // degree per town — hubs with more roads render bigger
+    var townDegree = towns.map(function(){ return 0; });
+    roadIdxEdges.forEach(function(e){ townDegree[e[0]]++; townDegree[e[1]]++; });
+
+    function nudgeParallel(pts){
+      // interior points only — keep both endpoints anchored to their feature
+      for (var i=1;i<pts.length-1;i++){
+        var near = nearestPointOnList(pts[i], riverSamples);
+        if (near.pt && near.dist < 44 && near.dist > 14){
+          var k = riverSamples.indexOf(near.pt);
+          var t2 = riverSamples[Math.min(k+1, riverSamples.length-1)];
+          var tdx = t2.x-near.pt.x, tdy = t2.y-near.pt.y;
+          var tl = Math.hypot(tdx,tdy)||1;
+          var nx = -tdy/tl, ny = tdx/tl;
+          var side = ((pts[i].x-near.pt.x)*nx + (pts[i].y-near.pt.y)*ny) >= 0 ? 1 : -1;
+          var targetX = near.pt.x + nx*30*side, targetY = near.pt.y + ny*30*side;
+          pts[i].x = pts[i].x*0.35 + targetX*0.65;
+          pts[i].y = pts[i].y*0.35 + targetY*0.65;
+        }
+      }
+    }
+
+    // mutual separation pass across every road/spur pair — moves BOTH sides apart,
+    // several passes, so no two paths end up tracing on top of each other anywhere
+    // along their length, not just near their shared endpoints
+    function separateAllPaths(allPts, minDist, iterations){
+      for (var pass=0; pass<iterations; pass++){
+        for (var a=0; a<allPts.length; a++){
+          for (var b=a+1; b<allPts.length; b++){
+            var A = allPts[a], B = allPts[b];
+            for (var i=1;i<A.length-1;i++){
+              var near = nearestPointOnList(A[i], B);
+              if (!near.pt || near.dist >= minDist || near.dist <= 0.1) continue;
+              var dx=A[i].x-near.pt.x, dy=A[i].y-near.pt.y;
+              var dl=Math.hypot(dx,dy)||1;
+              var ux=dx/dl, uy=dy/dl;
+              var push=(minDist-near.dist)*0.5;
+              A[i].x += ux*push; A[i].y += uy*push;
+              var j = B.indexOf(near.pt);
+              if (j>0 && j<B.length-1){ B[j].x -= ux*push; B[j].y -= uy*push; }
+            }
+          }
+        }
+      }
+    }
+
+    function nudgeAwayFromRoads(pts, placedRoadsPts, minDist){
+      for (var pass=0; pass<2; pass++){
+        for (var i=1;i<pts.length-1;i++){
+          for (var r=0;r<placedRoadsPts.length;r++){
+            var near = nearestPointOnList(pts[i], placedRoadsPts[r]);
+            if (near.pt && near.dist < minDist && near.dist > 0.1){
+              var dx = pts[i].x-near.pt.x, dy = pts[i].y-near.pt.y;
+              var dl = Math.hypot(dx,dy) || 1;
+              var push = (minDist - near.dist) * 0.6;
+              pts[i].x += (dx/dl) * push;
+              pts[i].y += (dy/dl) * push;
+            }
+          }
+        }
+      }
+    }
+
+    var roadCurves = [], roadSamples = [], placedRoadPts = [];
+    roadIdxEdges.forEach(function(e, idx){
+      var a = towns[e[0]], b = towns[e[1]];
+      var len = Math.hypot(a.x-b.x, a.y-b.y);
+      var segs = Math.max(6, Math.min(12, Math.round(len/60)));
+      var amp = Math.max(10, Math.min(24, len*0.055));
+      var key = 'road-'+edgeKey(a.id, b.id);
+      var pts = buildRoutePts(a, b, segs, amp, pathSeed(key, (a.seed||a.id) + (b.seed||b.id) + idx*0.01), ponds);
+      nudgeParallel(pts);
+      nudgeAwayFromRoads(pts, placedRoadPts, 28);
+      nudgeOutOfPonds(pts, ponds, 18);
+      roadCurves.push({ pts: pts, key: key });
+      roadSamples = roadSamples.concat(pts);
+      placedRoadPts.push(pts);
+    });
+
+    // candidate connection points for spurs, each tagged with which road/spur
+    // curve (or town) it belongs to, so a landmark doesn't fan out twice into
+    // the same route
+    var roadLikeTagged = [];
+    roadCurves.forEach(function(c, ci){
+      c.pts.forEach(function(pt){ roadLikeTagged.push({ x:pt.x, y:pt.y, src:'road'+ci }); });
+    });
+    towns.forEach(function(t){ roadLikeTagged.push({ x:t.x, y:t.y, src:'town'+t.id }); });
+
+    // spurs: each landmark connects to its nearest road/town, then fans out to
+    // extra roads/towns too — as long as there's real room: the extra target
+    // sits a meaningfully different direction away and isn't much further
+    var spurCurves = [];
+    landmarks.forEach(function(lm){
+      var candidates = roadLikeTagged.map(function(c){
+        return { x:c.x, y:c.y, src:c.src, d: Math.hypot(lm.x-c.x, lm.y-c.y), angle: Math.atan2(c.y-lm.y, c.x-lm.x) };
+      }).sort(function(a,b){ return a.d-b.d; });
+      if (!candidates.length) return;
+
+      var chosen = [];
+      var usedSrc = {};
+      var primaryDist = candidates[0].d;
+      candidates.forEach(function(cand){
+        if (chosen.length >= 3) return;
+        if (usedSrc[cand.src]) return; // don't fan into the same road/town twice
+        if (cand.d > Math.max(140, primaryDist*1.7) || cand.d > 320) return; // too far to be "room to draw"
+        var farEnoughInAngle = chosen.every(function(pick){
+          var da = Math.abs(cand.angle - pick.angle);
+          da = Math.min(da, Math.PI*2-da);
+          return da > 0.75; // ~43deg apart, so lines actually fan out rather than bunch
+        });
+        if (!farEnoughInAngle) return;
+        chosen.push(cand);
+        usedSrc[cand.src] = true;
+      });
+
+      chosen.forEach(function(target, ti){
+        var len2 = Math.hypot(lm.x-target.x, lm.y-target.y);
+        var segs2 = Math.max(4, Math.min(7, Math.round(len2/45)));
+        var amp2 = Math.max(8, Math.min(18, len2*0.05));
+        var spurKey = 'spur-'+lm.id+'-'+ti;
+        var pts2 = buildRoutePts(lm, target, segs2, amp2, pathSeed(spurKey, (lm.seed||lm.id) + ti*17), ponds);
+        nudgeParallel(pts2);
+        nudgeAwayFromRoads(pts2, placedRoadPts, 22);
+        nudgeOutOfPonds(pts2, ponds, 18);
+        spurCurves.push({ pts: pts2, key: spurKey });
+        placedRoadPts.push(pts2);
+      });
+    });
+
+    // global cleanup pass: pull apart any roads/spurs still running too close
+    // together anywhere along their length, then re-check pond clearance
+    separateAllPaths(placedRoadPts, 30, 3);
+    placedRoadPts.forEach(function(p){ nudgeOutOfPonds(p, ponds, 18); });
+
+    // enclosed loops (redundant roads create a cycle around a town cluster) —
+    // trace the loop's actual road curves and clear the forest inside it
+    var enclosedLoopFills = [];
+    if (roadIdxEdges.length > treeEdgeCount){
+      var treeAdj = {};
+      for (var te=0; te<treeEdgeCount; te++){
+        var a0 = roadIdxEdges[te][0], b0 = roadIdxEdges[te][1];
+        (treeAdj[a0] = treeAdj[a0]||[]).push({ to:b0, edgeIdx:te });
+        (treeAdj[b0] = treeAdj[b0]||[]).push({ to:a0, edgeIdx:te });
+      }
+      function bfsTreePath(start, end){
+        var visited = {}; visited[start]=true;
+        var queue = [{ node:start, path:[] }];
+        while (queue.length){
+          var cur = queue.shift();
+          if (cur.node === end) return cur.path;
+          (treeAdj[cur.node]||[]).forEach(function(edge){
+            if (!visited[edge.to]){
+              visited[edge.to] = true;
+              queue.push({ node:edge.to, path:cur.path.concat([{ from:cur.node, to:edge.to, edgeIdx:edge.edgeIdx }]) });
+            }
+          });
+        }
+        return null;
+      }
+      for (var ex=treeEdgeCount; ex<roadIdxEdges.length; ex++){
+        var ei = roadIdxEdges[ex][0], ej = roadIdxEdges[ex][1];
+        var treePath = bfsTreePath(ei, ej);
+        if (!treePath || !treePath.length) continue;
+        var cycleEdges = treePath.concat([{ from:ej, to:ei, edgeIdx:ex }]);
+        var loopPts = [];
+        cycleEdges.forEach(function(edge, idx){
+          var srcEdge = roadIdxEdges[edge.edgeIdx];
+          var raw = roadCurves[edge.edgeIdx].pts;
+          var oriented = (srcEdge[0] === edge.from) ? raw : raw.slice().reverse();
+          loopPts = loopPts.concat(idx===0 ? oriented : oriented.slice(1));
+        });
+        enclosedLoopFills.push(loopPts);
+      }
+    }
+
+    // roads/spurs should meet a river head-on rather than at a shallow angle —
+    // rotate the crossing segment around the intersection point so its local
+    // direction is perpendicular to the river's tangent there
+    function snapPerpendicularAtCrossings(curves){
+      curves.forEach(function(rc){
+        for (var i=0;i<rc.pts.length-1;i++){
+          for (var ri=0; ri<riverCurves.length; ri++){
+            var rivpts = riverCurves[ri].pts;
+            for (var j=0;j<rivpts.length-1;j++){
+              var hit = segIntersect(rc.pts[i], rc.pts[i+1], rivpts[j], rivpts[j+1]);
+              if (!hit) continue;
+              var tx = rivpts[j+1].x-rivpts[j].x, ty = rivpts[j+1].y-rivpts[j].y;
+              var tl = Math.hypot(tx,ty) || 1;
+              tx/=tl; ty/=tl;
+              var px = -ty, py = tx; // perpendicular to the river tangent
+              var rx = rc.pts[i+1].x-rc.pts[i].x, ry = rc.pts[i+1].y-rc.pts[i].y;
+              if (rx*px + ry*py < 0){ px=-px; py=-py; } // keep the road's original general direction
+              var d0 = Math.hypot(rc.pts[i].x-hit.x, rc.pts[i].y-hit.y);
+              var d1 = Math.hypot(rc.pts[i+1].x-hit.x, rc.pts[i+1].y-hit.y);
+              rc.pts[i]   = { x: hit.x - px*d0, y: hit.y - py*d0 };
+              rc.pts[i+1] = { x: hit.x + px*d1, y: hit.y + py*d1 };
+            }
+          }
+        }
+      });
+    }
+    snapPerpendicularAtCrossings(roadCurves);
+    snapPerpendicularAtCrossings(spurCurves);
+
+    // if a road/spur would cross a river right where a feature icon sits, slide
+    // that segment along the river until the crossing lands on empty water
+    function featureClearance(f){
+      return f.type === 'pond' ? (f.r||55) + 15 : (CLEAR_R[f.type] || 30);
+    }
+    function pointCollides(pt){
+      for (var i=0;i<state.features.length;i++){
+        var f = state.features[i];
+        if (Math.hypot(pt.x-f.x, pt.y-f.y) < featureClearance(f)) return true;
+      }
+      return false;
+    }
+    function avoidBridgeCollisions(curves){
+      curves.forEach(function(rc){
+        for (var i=0;i<rc.pts.length-1;i++){
+          for (var pass=0; pass<6; pass++){ // a fix can shift into a new collision, so retry
+            var moved = false;
+            for (var ri=0; ri<riverCurves.length; ri++){
+              var rivpts = riverCurves[ri].pts;
+              for (var j=0;j<rivpts.length-1;j++){
+                var hit = segIntersect(rc.pts[i], rc.pts[i+1], rivpts[j], rivpts[j+1]);
+                if (!hit || !pointCollides(hit)) continue;
+                var tx = rivpts[j+1].x-rivpts[j].x, ty = rivpts[j+1].y-rivpts[j].y;
+                var tl = Math.hypot(tx,ty) || 1;
+                tx/=tl; ty/=tl;
+                var fixed = false;
+                var steps = [26,52,78,104,130,-26,-52,-78,-104,-130];
+                for (var s=0;s<steps.length && !fixed;s++){
+                  var shift = steps[s];
+                  var np1 = { x: rc.pts[i].x + tx*shift, y: rc.pts[i].y + ty*shift };
+                  var np2 = { x: rc.pts[i+1].x + tx*shift, y: rc.pts[i+1].y + ty*shift };
+                  var hit2 = segIntersect(np1, np2, rivpts[j], rivpts[j+1]);
+                  if (hit2 && !pointCollides(hit2)){
+                    rc.pts[i] = np1; rc.pts[i+1] = np2;
+                    fixed = true; moved = true;
+                  }
+                }
+                if (fixed) break;
+              }
+              if (moved) break;
+            }
+            if (!moved) break;
+          }
+        }
+      });
+    }
+    avoidBridgeCollisions(roadCurves);
+    avoidBridgeCollisions(spurCurves);
+
+    // bridges: where a road/spur polyline crosses a river curve
+    var bridges = [];
+    function findBridges(curves){
+      curves.forEach(function(rc){
+        var rpts = rc.pts;
+        riverCurves.forEach(function(riv){
+          var rivpts = riv.pts;
+          for (var i=0;i<rpts.length-1;i++){
+            for (var j=0;j<rivpts.length-1;j++){
+              var hit = segIntersect(rpts[i], rpts[i+1], rivpts[j], rivpts[j+1]);
+              if (hit){
+                var dup = bridges.some(function(b){ return Math.hypot(b.x-hit.x,b.y-hit.y) < 18; });
+                if (!dup) bridges.push(hit);
+              }
+            }
+          }
+        });
+      });
+    }
+    findBridges(roadCurves);
+    findBridges(spurCurves);
+
+    // forest mask: clear circles around features + corridors along paths
+    var maskParts = [];
+    state.features.forEach(function(f){
+      var r = f.type==='pond' ? (f.r||55)+18 : (CLEAR_R[f.type]||30);
+      maskParts.push('<circle cx="'+f.x+'" cy="'+f.y+'" r="'+r+'"/>');
+    });
+    enclosedLoopFills.forEach(function(loopPts){
+      maskParts.push('<path d="'+polyD(loopPts)+' Z" fill="black"/>');
+    });
+    function corridor(c, w){
+      return '<path d="'+curveD(c)+'" fill="none" stroke="black" stroke-width="'+w+'" stroke-linecap="round"/>';
+    }
+    function corridorPts(pts, w){
+      return '<path d="'+catmullRomOpen(pts,1)+'" fill="none" stroke="black" stroke-width="'+w+'" stroke-linecap="round" stroke-linejoin="round"/>';
+    }
+    riverCurves.forEach(function(c){ maskParts.push(corridorPts(c.pts, 24)); });
+    roadCurves.forEach(function(c){ maskParts.push(corridorPts(c.pts, 24)); });
+    spurCurves.forEach(function(c){ maskParts.push(corridorPts(c.pts, 18)); });
+    forestMaskShapes.innerHTML = maskParts.join('');
+
+    // pond mask (goo merge)
+    pondMaskGroup.innerHTML = ponds.map(function(p){
+      return '<path d="'+pondBlobPath(p.x, p.y, p.r||55, p.id)+'" fill="white"/>';
+    }).join('');
+
+    /* ---- build world markup ---- */
+    var parts = [];
+
+    // wide, invisible stroke behind each path so it's easy to click without
+    // hitting the exact centerline; clicking it re-rolls just that path's shape
+    function pathHit(d, key){
+      return '<path class="path-hit" data-pathkey="'+key+'" d="'+d+'" fill="none" stroke="transparent" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;pointer-events:stroke"/>';
+    }
+
+    var riverMarkup = riverCurves.map(function(c){
+      var d = catmullRomOpen(c.pts, 1);
+      return '<path d="'+d+'" fill="none" stroke="#4fa5a3" stroke-width="9" stroke-linecap="round"/>'+
+             '<path d="'+d+'" fill="none" stroke="#8fdbd2" stroke-width="5" stroke-linecap="round"/>'+
+             pathHit(d, c.key);
+    }).join('');
+    parts.push(riverMarkup);
+
+    var roadMarkup = roadCurves.map(function(c){
+      var d = catmullRomOpen(c.pts, 1);
+      return '<path d="'+d+'" fill="none" stroke="#948aa8" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>'+
+             '<path d="'+d+'" fill="none" stroke="#bbb2cb" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="1 10"/>'+
+             pathHit(d, c.key);
+    }).join('');
+    parts.push(roadMarkup);
+
+    var spurMarkup = spurCurves.map(function(c){
+      var d = catmullRomOpen(c.pts,1);
+      return '<path d="'+d+'" fill="none" stroke="#948aa8" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>'+
+             pathHit(d, c.key);
+    }).join('');
+    parts.push(spurMarkup);
+
+    // ponds (masked pattern rect showing merged blobs) + invisible drag hit circles
+    var pext = window.MossTerrain ? window.MossTerrain.extent() : { x:0, y:0, w:W, h:H };
+    parts.push('<rect x="'+pext.x+'" y="'+pext.y+'" width="'+pext.w+'" height="'+pext.h+'" fill="url(#pondPattern)" mask="url(#pondMask)" style="pointer-events:none"></rect>');
+    ponds.forEach(function(p){
+      parts.push('<circle class="feature" data-id="'+p.id+'" data-type="pond" cx="'+p.x+'" cy="'+p.y+'" r="'+(p.r||55)+'" fill="transparent" style="pointer-events:all"></circle>');
+    });
+
+    mountains.forEach(function(m){
+      parts.push('<g class="feature" data-id="'+m.id+'" data-type="mountain" transform="translate('+m.x+','+m.y+')">'+
+        '<g transform="scale(2.1)"><use href="#icon-mountain" x="-18" y="-10.5" width="36" height="21"/></g></g>');
+    });
+
+    placedTrees.forEach(function(t){
+      parts.push('<g class="feature" data-id="'+t.id+'" data-type="tree" transform="translate('+t.x+','+t.y+')">'+
+        '<use href="#icon-tree-single" x="-9" y="-13.5" width="18" height="27"/></g>');
+    });
+
+    towns.forEach(function(t,i){
+      var deg = townDegree[i] || 0;
+      var scale = Math.max(1.3, Math.min(2.5, 1.3 + deg*0.22));
+      parts.push('<g class="feature" data-id="'+t.id+'" data-type="town" transform="translate('+t.x+','+t.y+')">'+
+        '<g transform="scale('+scale+')"><use href="#icon-town" x="-19.5" y="-15.5" width="39" height="31"/></g></g>');
+    });
+
+    landmarks.forEach(function(l){
+      parts.push('<g class="feature" data-id="'+l.id+'" data-type="landmark" transform="translate('+l.x+','+l.y+')">'+
+        '<g transform="scale(1.5)"><use href="#icon-landmark" x="-13" y="-12.5" width="26" height="25"/></g></g>');
+    });
+
+    bridges.forEach(function(b){
+      parts.push('<g transform="translate('+b.x+','+b.y+') rotate('+b.angle+')">'+
+        '<rect x="-12" y="-6" width="24" height="12" rx="2" fill="#a9835a" stroke="#6b4a30" stroke-width="1.6"/>'+
+        '<line x1="-12" y1="-6" x2="12" y2="-6" stroke="#6b4a30" stroke-width="1.2"/>'+
+        '<line x1="-12" y1="6" x2="12" y2="6" stroke="#6b4a30" stroke-width="1.2"/>'+
+        '</g>');
+    });
+
+    world.innerHTML = parts.join('');
+    wireDraggable();
+  }
+
+  /* ---------------- pointer coordinate helper ---------------- */
+  function toSvgPoint(e){
+    var pt = svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  }
+
+  /* ---------------- dragging placed objects ---------------- */
+  function wireDraggable(){
+    var els = world.querySelectorAll('.feature');
+    els.forEach(function(el){
+      el.addEventListener('pointerdown', function(e){
+        if (e.button === 2) return; // right button pans the map instead of dragging the feature
+        if (state.mode === 'erase') return; // let this bubble to the erase hit-test
+        e.stopPropagation();
+        // dragging an existing object should never also place a new one under it,
+        // even while a placement tool is selected — swallow the click this gesture produces
+        el.addEventListener('click', function(ce){ ce.stopPropagation(); }, { once:true, capture:true });
+        var id = +el.getAttribute('data-id');
+        var type = el.getAttribute('data-type');
+        var feature = state.features.find(function(f){ return f.id===id; });
+        if (!feature) return;
+
+        pushHistory();
+        var startPt = toSvgPoint(e);
+        var offX = startPt.x - feature.x, offY = startPt.y - feature.y;
+        var isPond = (type === 'pond');
+        el.setPointerCapture(e.pointerId);
+
+        function onMove(ev){
+          var p = toSvgPoint(ev);
+          var nx = p.x - offX, ny = p.y - offY;
+          nx = Math.max(10, Math.min(W-10, nx));
+          ny = Math.max(10, Math.min(H-10, ny));
+          if (!isPond){
+            var safe = keepOutOfPonds({x:nx,y:ny}, 4);
+            nx = safe.x; ny = safe.y;
+          }
+          if (isPond){
+            el.setAttribute('cx', nx); el.setAttribute('cy', ny);
+          } else {
+            el.setAttribute('transform', 'translate('+nx+','+ny+')');
+          }
+          feature._dx = nx; feature._dy = ny;
+        }
+        function onUp(){
+          el.removeEventListener('pointermove', onMove);
+          el.removeEventListener('pointerup', onUp);
+          if (feature._dx != null){
+            feature.x = feature._dx; feature.y = feature._dy;
+            delete feature._dx; delete feature._dy;
+          }
+          if (isPond) displaceFromPond(feature);
+          render();
+        }
+        el.addEventListener('pointermove', onMove);
+        el.addEventListener('pointerup', onUp);
+      });
+    });
+  }
+
+  /* ---------------- toolbar / modes ---------------- */
+  var toolBtns = Array.prototype.slice.call(document.querySelectorAll('.tool-btn[data-tool]'));
+  function setMode(m){
+    state.mode = (state.mode === m) ? null : m;
+    toolBtns.forEach(function(b){ b.classList.toggle('selected', b.getAttribute('data-tool')===state.mode); });
+    svg.classList.toggle('mode-active', !!state.mode);
+  }
+  toolBtns.forEach(function(b){ b.addEventListener('click', function(){ setMode(b.getAttribute('data-tool')); }); });
+
+  // clicking a river/road/spur re-rolls that single path's shape, without
+  // moving or placing anything else
+  world.addEventListener('click', function(e){
+    if (state.mode) return; // a placement/erase tool is active — let that click through instead
+    var hit = e.target.closest ? e.target.closest('.path-hit') : null;
+    if (!hit) return;
+    e.stopPropagation();
+    var key = hit.getAttribute('data-pathkey');
+    if (key) rerollPath(key);
+  });
+
+  svg.addEventListener('click', function(e){
+    if (!state.mode) return;
+    var loc = toSvgPoint(e);
+
+    if (state.mode === 'erase'){
+      var hitIdx=-1, hitDist=Infinity;
+      state.features.forEach(function(f,i){
+        var r = f.type==='pond' ? (f.r||55) : (HIT_R[f.type]||30);
+        var d = Math.hypot(loc.x-f.x, loc.y-f.y);
+        if (d < r && d < hitDist){ hitDist=d; hitIdx=i; }
+      });
+      if (hitIdx >= 0){ pushHistory(); state.features.splice(hitIdx,1); render(); }
+      return;
+    }
+
+    pushHistory();
+    var placeLoc = (state.mode === 'pond') ? loc : keepOutOfPonds(loc, 4);
+    var nf = { id: uid++, type: state.mode, x: placeLoc.x, y: placeLoc.y, seed: randSeed() };
+    if (state.mode === 'pond') nf.r = 42 + Math.random()*22;
+    state.features.push(nf);
+    if (state.mode === 'pond') displaceFromPond(nf);
+    render();
+  });
+
+  document.getElementById('undoBtn').addEventListener('click', undo);
+
+  /* ---------------- zoom + pan ---------------- */
+  function clampPan(){
+    var vbW=W/state.zoom, vbH=H/state.zoom;
+    var margin = 160;
+    var maxPanX = Math.max(0, (W-vbW)/2) + margin, maxPanY = Math.max(0, (H-vbH)/2) + margin;
+    state.panX = Math.max(-maxPanX, Math.min(maxPanX, state.panX));
+    state.panY = Math.max(-maxPanY, Math.min(maxPanY, state.panY));
+  }
+  function applyZoom(){
+    clampPan();
+    var vbW=W/state.zoom, vbH=H/state.zoom;
+    var vbX=(W-vbW)/2 - state.panX, vbY=(H-vbH)/2 - state.panY;
+    svg.setAttribute('viewBox', vbX+' '+vbY+' '+vbW+' '+vbH);
+    if (window.MossTerrain) window.MossTerrain.setView(state.zoom, state.panX, state.panY);
+  }
+  document.getElementById('zoomIn').addEventListener('click', function(){ state.zoom=Math.min(1.8,+(state.zoom+0.15).toFixed(2)); applyZoom(); });
+  document.getElementById('zoomOut').addEventListener('click', function(){ state.zoom=Math.max(0.6,+(state.zoom-0.15).toFixed(2)); applyZoom(); });
+  document.getElementById('centerBtn').addEventListener('click', function(){ state.zoom=1; state.panX=0; state.panY=0; applyZoom(); });
+
+  // right-click drag pans the map; right-click alone is otherwise unused here
+  // so it's free for panning instead of the browser's context menu
+  svg.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  (function(){
+    var panning = false, startClient = null, startPan = null;
+    svg.addEventListener('pointerdown', function(e){
+      if (e.button !== 2) return;
+      e.preventDefault();
+      panning = true;
+      startClient = { x:e.clientX, y:e.clientY };
+      startPan = { x: state.panX, y: state.panY };
+      svg.setPointerCapture(e.pointerId);
+      svg.style.cursor = 'grabbing';
+    });
+    svg.addEventListener('pointermove', function(e){
+      if (!panning) return;
+      var ctm = svg.getScreenCTM();
+      var scale = (ctm && ctm.a) ? ctm.a : 1; // screen px per svg unit
+      state.panX = startPan.x - (e.clientX - startClient.x) / scale;
+      state.panY = startPan.y - (e.clientY - startClient.y) / scale;
+      applyZoom();
+    });
+    function stopPanning(e){
+      if (!panning) return;
+      if (e.button !== undefined && e.button !== 2) return;
+      panning = false;
+      svg.style.cursor = '';
+    }
+    svg.addEventListener('pointerup', stopPanning);
+    svg.addEventListener('pointercancel', stopPanning);
+  })();
+
+  /* ---------------- day/night toggle ---------------- */
+  (function(){
+    var btn = document.getElementById('dnToggle');
+    var knob = document.getElementById('dnKnob');
+    var tint = document.getElementById('tintRect');
+    var on=false, animating=false;
+    function clearAnim(){ [knob, tint, btn].forEach(function(el){ el.classList.remove('anim-fwd','anim-rev'); }); }
+    function settle(){
+      animating=false; clearAnim();
+      knob.classList.toggle('state-on', on);
+      tint.classList.toggle('state-on', on);
+      btn.classList.toggle('state-on', on);
+      btn.setAttribute('aria-checked', on?'true':'false');
+      var bc = on?'bounce-on':'bounce-off';
+      knob.classList.add(bc);
+      knob.addEventListener('animationend', function onB(){ knob.removeEventListener('animationend', onB); knob.classList.remove(bc); });
+    }
+    function play(){
+      animating=true; clearAnim();
+      knob.classList.remove('bounce-on','bounce-off');
+      knob.classList.remove('state-on'); tint.classList.remove('state-on'); btn.classList.remove('state-on');
+      var dir = on?'anim-fwd':'anim-rev';
+      void knob.offsetWidth;
+      knob.classList.add(dir); tint.classList.add(dir); btn.classList.add(dir);
+      var handled=false;
+      function onEnd(){ if(handled) return; handled=true; knob.removeEventListener('animationend',onEnd); settle(); }
+      knob.addEventListener('animationend', onEnd);
+      setTimeout(onEnd, 1600);
+    }
+    btn.addEventListener('click', function(){ if (animating) return; on=!on; play(); });
+    btn.addEventListener('keydown', function(e){ if (e.key==='Enter'||e.key===' '){ e.preventDefault(); btn.click(); } });
+  })();
+
+  /* ---------------- hamburger menu ---------------- */
+  var menuPanel=document.getElementById('menuPanel'), menuScrim=document.getElementById('menuScrim'), hamburger=document.getElementById('hamburger');
+  function openMenu(){ menuPanel.classList.add('open'); menuScrim.classList.add('open'); menuPanel.setAttribute('aria-hidden','false'); hamburger.setAttribute('aria-expanded','true'); }
+  function closeMenu(){ menuPanel.classList.remove('open'); menuScrim.classList.remove('open'); menuPanel.setAttribute('aria-hidden','true'); hamburger.setAttribute('aria-expanded','false'); }
+  hamburger.addEventListener('click', openMenu);
+  document.getElementById('menuClose').addEventListener('click', closeMenu);
+  menuScrim.addEventListener('click', closeMenu);
+  document.getElementById('menuNew').addEventListener('click', function(){
+    pushHistory(); state.features = defaultFeatures(); state.pathSeeds = {}; render(); closeMenu();
+    if (window.MossTerrain) window.MossTerrain.regenerate();
+  });
+  document.getElementById('menuClearTrees').addEventListener('click', function(){
+    // shrink clearing footprint isn't stored per-tree anymore (pattern-based forest);
+    // "thin" nudges by briefly widening clearings around every feature.
+    render(); closeMenu();
+  });
+  document.getElementById('menuAbout').addEventListener('click', function(){ closeMenu(); });
+
+  /* ---------------- download as PNG ---------------- */
+  var downloadsCap = null;
+  (async function(){
+    try{ downloadsCap = (window.claude && window.claude.use) ? await window.claude.use('downloads') : null; }
+    catch(e){ downloadsCap = null; }
+  })();
+
+  function savePng(pngBlob){
+    if (downloadsCap){
+      return downloadsCap.save({ filename:'terrain-map.png', data: pngBlob }).catch(function(){});
+    }
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(pngBlob);
+    a.download = 'terrain-map.png';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  document.getElementById('downloadBtn').addEventListener('click', function(){
+    var prevVB = svg.getAttribute('viewBox');
+    svg.setAttribute('viewBox', '0 0 '+W+' '+H);
+    var svgStr = new XMLSerializer().serializeToString(svg);
+    svg.setAttribute('viewBox', prevVB);
+    // give the serialized copy explicit pixel dimensions so it rasterizes at the map's size
+    svgStr = svgStr.replace('<svg ', '<svg width="'+W+'" height="'+H+'" ');
+    var blob = new Blob([svgStr], { type:'image/svg+xml;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var img = new Image();
+    img.onload = function(){
+      var scale = 2;
+      var canvas = document.createElement('canvas');
+      canvas.width = W*scale; canvas.height = H*scale;
+      var ctx = canvas.getContext('2d');
+      if (window.MossTerrain) window.MossTerrain.drawWorld(ctx, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(function(pngBlob){ if (pngBlob) savePng(pngBlob); }, 'image/png');
+    };
+    img.onerror = function(){ URL.revokeObjectURL(url); };
+    img.src = url;
+  });
+
+  /* ---------------- keyboard ---------------- */
+  document.addEventListener('keydown', function(e){
+    if (e.target.closest && e.target.closest('input, select, textarea')) return;
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z'){ e.preventDefault(); undo(); }
+    else if (e.key === 'Escape'){ if (state.mode) setMode(state.mode); closeMenu(); }
+  });
+
+  /* ---------------- sizing ---------------- */
+  // masks and the forest cover the terrain's full extent (bigger than the
+  // viewport so zooming out or panning never shows a bare edge)
+  function syncSize(){
+    W = window.innerWidth; H = window.innerHeight;
+    var ext = window.MossTerrain ? window.MossTerrain.extent() : { x:0, y:0, w:W, h:H };
+    ['forestMask', 'pondMask'].forEach(function(id){
+      var m = document.getElementById(id);
+      m.setAttribute('x', ext.x); m.setAttribute('y', ext.y);
+      m.setAttribute('width', ext.w); m.setAttribute('height', ext.h);
+    });
+    ['forestMaskBase', 'forestRect'].forEach(function(id){
+      var r = document.getElementById(id);
+      r.setAttribute('x', ext.x); r.setAttribute('y', ext.y);
+      r.setAttribute('width', ext.w); r.setAttribute('height', ext.h);
+    });
+  }
+  if (window.MossTerrain){
+    window.MossTerrain.onWaterChange(function(d){
+      document.getElementById('terrainForestMask').setAttribute('d', d);
+    });
+  }
+  var resizeRaf = null;
+  window.addEventListener('resize', function(){
+    cancelAnimationFrame(resizeRaf);
+    resizeRaf = requestAnimationFrame(function(){ syncSize(); applyZoom(); render(); });
+  });
+
+  /* ---------------- boot ---------------- */
+  syncSize();
+  applyZoom();
+  updateUndoBtn();
+  render();
 })();
 </script>
 </body>
