@@ -862,13 +862,13 @@
     return (h ^ (h >>> 16)) >>> 0;
   }
 
-  // the grid sits inside the canvas, centered, with room for jitter and the
-  // border stroke, so its outer edge is part of the map rather than cut off
-  function generateGrid(width, height, cellSize, jitter, noiseX, noiseY) {
+  // as many whole tiles as fit in `frame` (canvas coordinates), centered,
+  // leaving room for jitter and the border stroke so both stay inside it
+  function generateGrid(frame, cellSize, jitter, noiseX, noiseY) {
     const inset = cellSize * jitter + BORDER_WIDTH / 2;
-    const cols = Math.max(1, Math.floor((width - inset * 2) / cellSize));
-    const rows = Math.max(1, Math.floor((height - inset * 2) / cellSize));
-    const x0 = (width - cols * cellSize) / 2, y0 = (height - rows * cellSize) / 2;
+    const cols = Math.max(1, Math.floor((frame.w - inset * 2) / cellSize));
+    const rows = Math.max(1, Math.floor((frame.h - inset * 2) / cellSize));
+    const x0 = frame.x + (frame.w - cols * cellSize) / 2, y0 = frame.y + (frame.h - rows * cellSize) / 2;
     const points = [];
     for (let j = 0; j <= rows; j++) {
       const row = [];
@@ -893,8 +893,20 @@
 
   // must match the builder's zoom-out limit and pan margin
   const MIN_ZOOM = 0.6, PAN_MARGIN = 160;
+  // the map opens at MAX_ZOOM (the builder's zoom-in limit), and the whole
+  // bordered tile grid must fit on screen there, clear of the top buttons
+  // and the bottom toolbar (screen px)
+  const MAX_ZOOM = 1.8, MAP_PAD = { top: 76, right: 24, bottom: 96, left: 24 };
   // stroke around the outermost tiles
   const BORDER_COLOR = '#C5C39E', BORDER_WIDTH = 10;
+
+  // map-space rect that's on screen, inside the padding, at MAX_ZOOM
+  function mapFrame() {
+    const w = window.innerWidth, h = window.innerHeight;
+    const x0 = w / 2 + (MAP_PAD.left - w / 2) / MAX_ZOOM, x1 = w / 2 + (w / 2 - MAP_PAD.right) / MAX_ZOOM;
+    const y0 = h / 2 + (MAP_PAD.top - h / 2) / MAX_ZOOM, y1 = h / 2 + (h / 2 - MAP_PAD.bottom) / MAX_ZOOM;
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
   const MAX_PIXELS = 16e6;
   let ext = { x: 0, y: 0, w: 0, h: 0 }, dpr = 1;
   let view = { zoom: 1, panX: 0, panY: 0 };
@@ -991,6 +1003,11 @@
     groundLayers.forEach((el) => { el.style.transform = t; });
   }
 
+  function canvasFrame() {
+    const f = mapFrame();
+    return { x: f.x - ext.x, y: f.y - ext.y, w: f.w, h: f.h };
+  }
+
   function draw() {
     const w = ext.w, h = ext.h;
     canvas.width = Math.round(w * dpr);
@@ -1005,7 +1022,7 @@
     const perlinJY = makePerlin2D(seed + 202);
     const ridged = makeRidgedMF(perlinTerrain, { octaves: s.oct, lacunarity: s.lac, gain: s.gain });
 
-    const { points, cols, rows, x0, y0 } = generateGrid(w, h, s.cell, s.jitter, perlinJX, perlinJY);
+    const { points, cols, rows, x0, y0 } = generateGrid(canvasFrame(), s.cell, s.jitter, perlinJX, perlinJY);
     const path = terrainType === 'valley' ? makeValleyPath(cols, rows, seed) : null;
 
     // sample every cell's band index once, at its unjittered center
@@ -1149,9 +1166,16 @@
     sparseness: () => parseFloat(els.sparse.value),
     // called when the sparseness slider moves
     onObjectsChange(fn) { objectListeners.push(fn); },
-    // paint the on-screen map area (0,0)-(W,H) into another context, for PNG export
-    drawWorld(target, outW, outH) {
-      target.drawImage(canvas, -ext.x * dpr, -ext.y * dpr, window.innerWidth * dpr, window.innerHeight * dpr, 0, 0, outW, outH);
+    // map-space rect of the tile grid (without the border stroke)
+    bounds() {
+      if (!grid) return mapFrame();
+      return { x: grid.x0 + ext.x, y: grid.y0 + ext.y, w: grid.cols * grid.cell, h: grid.rows * grid.cell };
+    },
+    // map-space rect that holds the grid and its border, jitter included
+    frame: mapFrame,
+    // paint map-space rect r into another context, for PNG export
+    drawWorld(target, outW, outH, r) {
+      target.drawImage(canvas, (r.x - ext.x) * dpr, (r.y - ext.y) * dpr, r.w * dpr, r.h * dpr, 0, 0, outW, outH);
     },
   };
 
@@ -1180,10 +1204,19 @@
   var uid = 1;
 
   function randSeed(){ return Math.random()*1000; }
-  // starter layout, authored on a 1200x800 board and scaled to the viewport
+  // the tile grid's rect in map space; features stay inside it
+  function mapBounds(){
+    return window.MossTerrain ? window.MossTerrain.bounds() : { x:0, y:0, w:W, h:H };
+  }
+  function clampToMap(x, y){
+    var b = mapBounds();
+    return { x: Math.max(b.x+10, Math.min(b.x+b.w-10, x)), y: Math.max(b.y+10, Math.min(b.y+b.h-10, y)) };
+  }
+  // starter layout, authored on a 1200x800 board and scaled to the map
   function defaultFeatures(){
-    function sx(v){ return v * W / 1200; }
-    function sy(v){ return v * H / 800; }
+    var b = mapBounds();
+    function sx(v){ return b.x + v * b.w / 1200; }
+    function sy(v){ return b.y + v * b.h / 800; }
     return [
       { id: uid++, type:'mountain', x:sx(260), y:sy(150), seed: randSeed() },
       { id: uid++, type:'pond',     x:sx(420), y:sy(290), r:60, seed: randSeed() },
@@ -1194,8 +1227,8 @@
     ];
   }
 
-  // MIN_ZOOM must match the terrain's zoom-out limit (it sizes the ground to
-  // it); the map opens, and resets to, fully zoomed in
+  // both limits must match the terrain's: MIN_ZOOM sizes the ground, MAX_ZOOM
+  // sizes the map so it fits on screen. The map opens, and resets to, MAX_ZOOM.
   var MIN_ZOOM = 0.6, MAX_ZOOM = 1.8, BUTTON_STEP = 1.2;
   var state = { features: defaultFeatures(), history: [], mode: null, zoom: MAX_ZOOM, panX: 0, panY: 0, pathSeeds: {} };
 
@@ -1448,8 +1481,8 @@
       var r = (pond.r||55) + 20;
       if (d < r){
         var ux = d>0.1 ? dx/d : 1, uy = d>0.1 ? dy/d : 0;
-        f.x = Math.max(10, Math.min(W-10, pond.x + ux*r));
-        f.y = Math.max(10, Math.min(H-10, pond.y + uy*r));
+        var c = clampToMap(pond.x + ux*r, pond.y + uy*r);
+        f.x = c.x; f.y = c.y;
       }
     });
   }
@@ -1707,6 +1740,14 @@
     // together anywhere along their length, then re-check pond clearance
     separateAllPaths(placedRoadPts, 30, 3);
     placedRoadPts.forEach(function(p){ nudgeOutOfPonds(p, ponds, 18); });
+
+    // bends can swing past the map's edge; keep every road, spur and river
+    // on the map (points are shared with the sample lists, so edit in place)
+    [roadCurves, spurCurves, riverCurves].forEach(function(list){
+      list.forEach(function(c){
+        c.pts.forEach(function(pt){ var q = clampToMap(pt.x, pt.y); pt.x = q.x; pt.y = q.y; });
+      });
+    });
 
     // enclosed loops (redundant roads create a cycle around a town cluster) —
     // trace the loop's actual road curves and clear the forest inside it
@@ -2033,8 +2074,8 @@
           if (state.gesturing) return; // a second finger turned this into a pinch
           var p = toSvgPoint(ev);
           var nx = p.x - offX, ny = p.y - offY;
-          nx = Math.max(10, Math.min(W-10, nx));
-          ny = Math.max(10, Math.min(H-10, ny));
+          var c = clampToMap(nx, ny);
+          nx = c.x; ny = c.y;
           if (!isPond){
             var safe = keepOutOfPonds({x:nx,y:ny}, 4);
             nx = safe.x; ny = safe.y;
@@ -2096,6 +2137,10 @@
       if (hitIdx >= 0){ pushHistory(); state.features.splice(hitIdx,1); render(); }
       return;
     }
+
+    // nothing gets placed off the map
+    var b = mapBounds();
+    if (loc.x < b.x || loc.y < b.y || loc.x > b.x+b.w || loc.y > b.y+b.h) return;
 
     pushHistory();
     var placeLoc = (state.mode === 'pond') ? loc : keepOutOfPonds(loc, 4);
@@ -2304,21 +2349,23 @@
   }
 
   document.getElementById('downloadBtn').addEventListener('click', function(){
+    // export just the bordered map
+    var r = window.MossTerrain ? window.MossTerrain.frame() : { x:0, y:0, w:W, h:H };
     var prevVB = svg.getAttribute('viewBox');
-    svg.setAttribute('viewBox', '0 0 '+W+' '+H);
+    svg.setAttribute('viewBox', r.x+' '+r.y+' '+r.w+' '+r.h);
     var svgStr = new XMLSerializer().serializeToString(svg);
     svg.setAttribute('viewBox', prevVB);
     // give the serialized copy explicit pixel dimensions so it rasterizes at the map's size
-    svgStr = svgStr.replace('<svg ', '<svg width="'+W+'" height="'+H+'" ');
+    svgStr = svgStr.replace('<svg ', '<svg width="'+r.w+'" height="'+r.h+'" ');
     var blob = new Blob([svgStr], { type:'image/svg+xml;charset=utf-8' });
     var url = URL.createObjectURL(blob);
     var img = new Image();
     img.onload = function(){
       var scale = 2;
       var canvas = document.createElement('canvas');
-      canvas.width = W*scale; canvas.height = H*scale;
+      canvas.width = Math.round(r.w*scale); canvas.height = Math.round(r.h*scale);
       var ctx = canvas.getContext('2d');
-      if (window.MossTerrain) window.MossTerrain.drawWorld(ctx, canvas.width, canvas.height);
+      if (window.MossTerrain) window.MossTerrain.drawWorld(ctx, canvas.width, canvas.height, r);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
       canvas.toBlob(function(pngBlob){ if (pngBlob) savePng(pngBlob); }, 'image/png');
@@ -2384,6 +2431,7 @@
     if (!T) return;
     var ext = T.extent(), seed = T.seed() | 0, density = 1 - T.sparseness();
     var landUnder = function(x, y){ return !!GROUND_OBJECTS[T.bandAt(x, y)]; };
+    var mb = T.bounds();
 
     Object.keys(GROUND_OBJECTS).forEach(function(band, bi){
       var set = GROUND_OBJECTS[band], sp = set.spacing;
@@ -2401,6 +2449,8 @@
           // so nothing stands in water or snow
           var half = o.w * 0.4;
           if (!landUnder(x - half, y) || !landUnder(x + half, y) || !landUnder(x, y - o.h / 2)) continue;
+          // and the whole sprite stays inside the map's border
+          if (x - o.w / 2 < mb.x || x + o.w / 2 > mb.x + mb.w || y - o.h < mb.y || y > mb.y + mb.h) continue;
           forestSpots.push({ use:'obj-'+o.id, x:x, y:y, base:y,
                              cx:x, cy:y - o.h / 2, pad:Math.min(MAX_PAD, o.w / 2) });
         }
