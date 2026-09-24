@@ -2002,6 +2002,7 @@
         el.setPointerCapture(e.pointerId);
 
         function onMove(ev){
+          if (state.gesturing) return; // a second finger turned this into a pinch
           var p = toSvgPoint(ev);
           var nx = p.x - offX, ny = p.y - offY;
           nx = Math.max(10, Math.min(W-10, nx));
@@ -2094,19 +2095,63 @@
     svg.setAttribute('viewBox', vbX+' '+vbY+' '+vbW+' '+vbH);
     if (window.MossTerrain) window.MossTerrain.setView(state.zoom, state.panX, state.panY);
   }
-  document.getElementById('zoomIn').addEventListener('click', function(){ state.zoom=Math.min(1.8,+(state.zoom+0.15).toFixed(2)); applyZoom(); });
-  document.getElementById('zoomOut').addEventListener('click', function(){ state.zoom=Math.max(0.6,+(state.zoom-0.15).toFixed(2)); applyZoom(); });
+  // MIN_ZOOM must match the terrain's zoom-out limit (it sizes the ground to it)
+  var MIN_ZOOM = 0.6, MAX_ZOOM = 1.8, BUTTON_STEP = 1.2;
+  // zoom to `z`, keeping the map point under screen point (sx, sy) in place
+  function zoomAt(z, sx, sy){
+    z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
+    var mx = (sx - W/2)/state.zoom + W/2 - state.panX;
+    var my = (sy - H/2)/state.zoom + H/2 - state.panY;
+    state.zoom = z;
+    state.panX = (sx - W/2)/z + W/2 - mx;
+    state.panY = (sy - H/2)/z + H/2 - my;
+    applyZoom();
+  }
+  document.getElementById('zoomIn').addEventListener('click', function(){ zoomAt(state.zoom*BUTTON_STEP, W/2, H/2); });
+  document.getElementById('zoomOut').addEventListener('click', function(){ zoomAt(state.zoom/BUTTON_STEP, W/2, H/2); });
   document.getElementById('centerBtn').addEventListener('click', function(){ state.zoom=1; state.panX=0; state.panY=0; applyZoom(); });
 
-  // right-click drag pans the map; right-click alone is otherwise unused here
-  // so it's free for panning instead of the browser's context menu
-  svg.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  // Wheel: a trackpad pinch (and ctrl + wheel) arrives with ctrlKey set and
+  // zooms at the cursor. A mouse wheel also zooms; a trackpad's two-finger
+  // scroll pans. Mouse wheels send line-mode or chunky whole-number deltas
+  // on one axis, trackpads send small or fractional ones, often on both.
+  function looksLikeMouseWheel(e){
+    if (e.deltaMode !== 0) return true;
+    return e.deltaX === 0 && Math.abs(e.deltaY) >= 40 && Number.isInteger(e.deltaY);
+  }
+  svg.addEventListener('wheel', function(e){
+    e.preventDefault(); // keep the browser from zooming or scrolling the page
+    var dy = e.deltaMode === 1 ? e.deltaY*16 : e.deltaMode === 2 ? e.deltaY*H : e.deltaY;
+    if (e.ctrlKey){
+      zoomAt(state.zoom*Math.exp(-dy*0.01), e.clientX, e.clientY);
+    } else if (looksLikeMouseWheel(e)){
+      zoomAt(state.zoom*Math.exp(-Math.max(-100, Math.min(100, dy))*0.002), e.clientX, e.clientY);
+    } else {
+      state.panX -= e.deltaX/state.zoom;
+      state.panY -= e.deltaY/state.zoom;
+      applyZoom();
+    }
+  }, { passive:false });
+  // Safari reports trackpad pinches as gesture events rather than ctrl + wheel
   (function(){
-    var panning = false, startClient = null, startPan = null;
+    var startZoom = 1;
+    svg.addEventListener('gesturestart', function(e){ e.preventDefault(); startZoom = state.zoom; });
+    svg.addEventListener('gesturechange', function(e){ e.preventDefault(); zoomAt(startZoom*e.scale, e.clientX, e.clientY); });
+    svg.addEventListener('gestureend', function(e){ e.preventDefault(); });
+  })();
+
+  // right- or middle-click drag pans the map; right-click alone is otherwise
+  // unused here so it's free for panning instead of the browser's context menu
+  svg.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  // stop the middle button's autoscroll
+  svg.addEventListener('mousedown', function(e){ if (e.button === 1) e.preventDefault(); });
+  (function(){
+    var panning = false, panButton = null, startClient = null, startPan = null;
     svg.addEventListener('pointerdown', function(e){
-      if (e.button !== 2) return;
+      if (e.pointerType === 'touch' || (e.button !== 2 && e.button !== 1)) return;
       e.preventDefault();
       panning = true;
+      panButton = e.button;
       startClient = { x:e.clientX, y:e.clientY };
       startPan = { x: state.panX, y: state.panY };
       svg.setPointerCapture(e.pointerId);
@@ -2114,20 +2159,64 @@
     });
     svg.addEventListener('pointermove', function(e){
       if (!panning) return;
-      var ctm = svg.getScreenCTM();
-      var scale = (ctm && ctm.a) ? ctm.a : 1; // screen px per svg unit
-      state.panX = startPan.x + (e.clientX - startClient.x) / scale;
-      state.panY = startPan.y + (e.clientY - startClient.y) / scale;
+      state.panX = startPan.x + (e.clientX - startClient.x) / state.zoom;
+      state.panY = startPan.y + (e.clientY - startClient.y) / state.zoom;
       applyZoom();
     });
     function stopPanning(e){
       if (!panning) return;
-      if (e.button !== undefined && e.button !== 2) return;
+      if (e.type === 'pointerup' && e.button !== panButton) return;
       panning = false;
       svg.style.cursor = '';
     }
     svg.addEventListener('pointerup', stopPanning);
     svg.addEventListener('pointercancel', stopPanning);
+  })();
+
+  // two fingers pinch to zoom and drag to pan. Listeners run in the capture
+  // phase so a finger that lands on a town or pond still counts.
+  (function(){
+    var touches = new Map(), pinch = null;
+    function mid(){
+      var pts = Array.from(touches.values());
+      return { x:(pts[0].x+pts[1].x)/2, y:(pts[0].y+pts[1].y)/2, d:Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y) || 1 };
+    }
+    svg.addEventListener('pointerdown', function(e){
+      if (e.pointerType !== 'touch') return;
+      touches.set(e.pointerId, { x:e.clientX, y:e.clientY });
+      if (touches.size === 2){
+        var m = mid();
+        pinch = { x:m.x, y:m.y, d:m.d, zoom:state.zoom };
+        state.gesturing = true;
+      }
+    }, true);
+    svg.addEventListener('pointermove', function(e){
+      if (!touches.has(e.pointerId)) return;
+      touches.set(e.pointerId, { x:e.clientX, y:e.clientY });
+      if (!pinch || touches.size !== 2) return;
+      var m = mid();
+      // pan by the midpoint's movement, then zoom around where it is now
+      state.panX += (m.x - pinch.x)/state.zoom;
+      state.panY += (m.y - pinch.y)/state.zoom;
+      pinch.x = m.x; pinch.y = m.y;
+      zoomAt(pinch.zoom*m.d/pinch.d, m.x, m.y);
+    }, true);
+    function lift(e){
+      if (!touches.delete(e.pointerId)) return;
+      if (touches.size < 2) pinch = null;
+      // the last finger up ends the gesture; swallow the click it produces
+      // so a pinch never places a feature
+      if (touches.size === 0 && state.gesturing){
+        state.gesturing = false;
+        gestureEnded = Date.now();
+      }
+    }
+    var gestureEnded = 0;
+    svg.addEventListener('click', function(ce){
+      if (Date.now() - gestureEnded < 400) ce.stopPropagation();
+    }, true);
+    svg.addEventListener('pointerup', lift, true);
+    svg.addEventListener('pointercancel', lift, true);
   })();
 
   /* ---------------- day/night toggle ---------------- */
