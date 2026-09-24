@@ -892,20 +892,18 @@
   let seed = Math.floor(Math.random() * 1e9);
 
   // must match the builder's zoom-out limit and pan margin
-  const MIN_ZOOM = 0.6, PAN_MARGIN = 160;
-  // the map opens at MAX_ZOOM (the builder's zoom-in limit), and the whole
-  // bordered tile grid must fit on screen there, clear of the top buttons
-  // and the bottom toolbar (screen px)
-  const MAX_ZOOM = 1.8, MAP_PAD = { top: 76, right: 24, bottom: 96, left: 24 };
+  // the map is a fixed 3:2 landscape board in map space (1 unit = 1 css px
+  // at zoom 1); the builder zooms out just far enough to show all of it
+  const MAP_W = 1500, MAP_H = 1000;
+  // must match the builder's zoom-in limit; the canvas keeps enough pixels
+  // to stay sharp there
+  const MAX_ZOOM = 1.8;
   // stroke around the outermost tiles
   const BORDER_COLOR = '#C5C39E', BORDER_WIDTH = 10;
 
-  // map-space rect that's on screen, inside the padding, at MAX_ZOOM
+  // map-space rect that holds the tile grid and its border
   function mapFrame() {
-    const w = window.innerWidth, h = window.innerHeight;
-    const x0 = w / 2 + (MAP_PAD.left - w / 2) / MAX_ZOOM, x1 = w / 2 + (w / 2 - MAP_PAD.right) / MAX_ZOOM;
-    const y0 = h / 2 + (MAP_PAD.top - h / 2) / MAX_ZOOM, y1 = h / 2 + (h / 2 - MAP_PAD.bottom) / MAX_ZOOM;
-    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    return { x: 0, y: 0, w: MAP_W, h: MAP_H };
   }
   const MAX_PIXELS = 16e6;
   let ext = { x: 0, y: 0, w: 0, h: 0 }, dpr = 1;
@@ -982,16 +980,15 @@
 
   function measure() {
     const w = window.innerWidth, h = window.innerHeight;
-    const ex = Math.ceil(w / (2 * MIN_ZOOM) - w / 2 + PAN_MARGIN);
-    const ey = Math.ceil(h / (2 * MIN_ZOOM) - h / 2 + PAN_MARGIN);
-    ext = { x: -ex, y: -ey, w: w + 2 * ex, h: h + 2 * ey };
-    dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_PIXELS / (ext.w * ext.h)));
+    // the canvas covers just the map; the page shows around it
+    ext = mapFrame();
+    dpr = Math.min((window.devicePixelRatio || 1) * MAX_ZOOM, Math.sqrt(MAX_PIXELS / (ext.w * ext.h)));
     groundLayers.forEach((el) => {
       el.style.left = ext.x + 'px';
       el.style.top = ext.y + 'px';
       el.style.width = ext.w + 'px';
       el.style.height = ext.h + 'px';
-      el.style.transformOrigin = (ex + w / 2) + 'px ' + (ey + h / 2) + 'px';
+      el.style.transformOrigin = (w / 2 - ext.x) + 'px ' + (h / 2 - ext.y) + 'px';
     });
     applyView();
   }
@@ -1036,6 +1033,9 @@
       levels.push(row);
     }
     grid = { points, levels, cols, rows, bands, cell: s.cell, x0, y0, seed };
+    // clouds stay inside the grid's edge
+    const gx1 = w - (x0 + cols * s.cell), gy1 = h - (y0 + rows * s.cell);
+    document.getElementById('clouds').style.clipPath = 'inset(' + y0 + 'px ' + gx1 + 'px ' + gy1 + 'px ' + x0 + 'px)';
 
     // outline of the whole grid, clockwise along its outermost cell edges
     const outline = points[0].slice();
@@ -1189,8 +1189,8 @@
 <script>
 (function(){
   "use strict";
-  // the map's coordinate space is the viewport itself (1 unit = 1 css px at
-  // zoom 1), so it lines up with the terrain background drawn underneath
+  // map space is shared with the terrain (1 unit = 1 css px at zoom 1), so
+  // the builder lines up with the terrain drawn underneath
   var W = window.innerWidth, H = window.innerHeight;
   var svg = document.getElementById('map');
   var world = document.getElementById('world');
@@ -1227,10 +1227,11 @@
     ];
   }
 
-  // both limits must match the terrain's: MIN_ZOOM sizes the ground, MAX_ZOOM
-  // sizes the map so it fits on screen. The map opens, and resets to, MAX_ZOOM.
-  var MIN_ZOOM = 0.6, MAX_ZOOM = 1.8, BUTTON_STEP = 1.2;
-  var state = { features: defaultFeatures(), history: [], mode: null, zoom: MAX_ZOOM, panX: 0, panY: 0, pathSeeds: {} };
+  // MAX_ZOOM must match the terrain's. The zoom-out limit is whatever fits
+  // the whole map on screen, clear of the top buttons and bottom toolbar
+  // (MAP_PAD, screen px); the map opens, and resets to, that view.
+  var MAX_ZOOM = 1.8, BUTTON_STEP = 1.2, MAP_PAD = { top: 76, right: 24, bottom: 96, left: 24 };
+  var state = { features: defaultFeatures(), history: [], mode: null, zoom: 1, panX: 0, panY: 0, pathSeeds: {} };
 
   function snapshot(){ return JSON.parse(JSON.stringify({ features: state.features, pathSeeds: state.pathSeeds })); }
   function pushHistory(){
@@ -2154,14 +2155,31 @@
   document.getElementById('undoBtn').addEventListener('click', undo);
 
   /* ---------------- zoom + pan ---------------- */
-  function clampPan(){
-    var vbW=W/state.zoom, vbH=H/state.zoom;
-    var margin = 160;
-    var maxPanX = Math.max(0, (W-vbW)/2) + margin, maxPanY = Math.max(0, (H-vbH)/2) + margin;
-    state.panX = Math.max(-maxPanX, Math.min(maxPanX, state.panX));
-    state.panY = Math.max(-maxPanY, Math.min(maxPanY, state.panY));
+  function mapFrame(){
+    return window.MossTerrain ? window.MossTerrain.frame() : { x:0, y:0, w:W, h:H };
   }
+  function minZoom(){
+    var f = mapFrame();
+    var z = Math.min((W - MAP_PAD.left - MAP_PAD.right) / f.w, (H - MAP_PAD.top - MAP_PAD.bottom) / f.h);
+    return Math.min(MAX_ZOOM, Math.max(0.05, z));
+  }
+  // pan (map units) that puts map coordinate m at screen coordinate s
+  function panFor(m, s, size){ return (s - size/2)/state.zoom + size/2 - m; }
+  // on each axis, a map that fits between the paddings is centered there;
+  // a bigger one can pan until its edge reaches the padding
+  function clampAxis(pan, start, len, size, padA, padB){
+    var lo = panFor(start + len, size - padB, size), hi = panFor(start, padA, size);
+    if (lo >= hi) return panFor(start + len/2, (padA + size - padB)/2, size);
+    return Math.max(lo, Math.min(hi, pan));
+  }
+  function clampPan(){
+    var f = mapFrame();
+    state.panX = clampAxis(state.panX, f.x, f.w, W, MAP_PAD.left, MAP_PAD.right);
+    state.panY = clampAxis(state.panY, f.y, f.h, H, MAP_PAD.top, MAP_PAD.bottom);
+  }
+  function resetView(){ state.zoom = minZoom(); applyZoom(); }
   function applyZoom(){
+    state.zoom = Math.max(minZoom(), Math.min(MAX_ZOOM, state.zoom));
     clampPan();
     var vbW=W/state.zoom, vbH=H/state.zoom;
     var vbX=(W-vbW)/2 - state.panX, vbY=(H-vbH)/2 - state.panY;
@@ -2170,7 +2188,7 @@
   }
   // zoom to `z`, keeping the map point under screen point (sx, sy) in place
   function zoomAt(z, sx, sy){
-    z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
+    z = Math.max(minZoom(), Math.min(MAX_ZOOM, z));
     var mx = (sx - W/2)/state.zoom + W/2 - state.panX;
     var my = (sy - H/2)/state.zoom + H/2 - state.panY;
     state.zoom = z;
@@ -2180,7 +2198,7 @@
   }
   document.getElementById('zoomIn').addEventListener('click', function(){ zoomAt(state.zoom*BUTTON_STEP, W/2, H/2); });
   document.getElementById('zoomOut').addEventListener('click', function(){ zoomAt(state.zoom/BUTTON_STEP, W/2, H/2); });
-  document.getElementById('centerBtn').addEventListener('click', function(){ state.zoom=MAX_ZOOM; state.panX=0; state.panY=0; applyZoom(); });
+  document.getElementById('centerBtn').addEventListener('click', resetView);
 
   // scrolling zooms at the cursor. A trackpad pinch (and ctrl + wheel) sends
   // small deltas with ctrlKey set, so it gets a stronger response.
@@ -2350,7 +2368,7 @@
 
   document.getElementById('downloadBtn').addEventListener('click', function(){
     // export just the bordered map
-    var r = window.MossTerrain ? window.MossTerrain.frame() : { x:0, y:0, w:W, h:H };
+    var r = mapFrame();
     var prevVB = svg.getAttribute('viewBox');
     svg.setAttribute('viewBox', r.x+' '+r.y+' '+r.w+' '+r.h);
     var svgStr = new XMLSerializer().serializeToString(svg);
@@ -2557,8 +2575,7 @@
   }
 
   /* ---------------- sizing ---------------- */
-  // masks and the forest cover the terrain's full extent (bigger than the
-  // viewport so zooming out or panning never shows a bare edge)
+  // masks and the forest cover the terrain's full extent (the whole map)
   function syncSize(){
     W = window.innerWidth; H = window.innerHeight;
     var ext = window.MossTerrain ? window.MossTerrain.extent() : { x:0, y:0, w:W, h:H };
@@ -2582,7 +2599,7 @@
   /* ---------------- boot ---------------- */
   syncSize();
   computeForestSpots();
-  applyZoom();
+  resetView();
   updateUndoBtn();
   render();
 })();
