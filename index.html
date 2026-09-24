@@ -1812,6 +1812,35 @@
     findBridges(roadCurves);
     findBridges(spurCurves);
 
+    // bridges over the terrain's water: wherever a road or spur runs across
+    // the Water band, a plank deck covers that whole stretch plus a little
+    // bank on each side
+    var waterBridges = [];
+    function findWaterBridges(curves, deck){
+      if (!window.MossTerrain) return;
+      curves.forEach(function(rc){
+        if (rc.pts.length < 2) return;
+        var line = resamplePolyline(sampleCatmullOpen(rc.pts, 8), 3);
+        var start = -1;
+        for (var k = 0; k <= line.length; k++){
+          var wet = k < line.length && window.MossTerrain.bandAt(line[k].x, line[k].y) === 'Water';
+          if (wet && start < 0) start = k;
+          if (!wet && start >= 0){
+            waterBridges.push({ pts: line.slice(Math.max(0, start-2), Math.min(line.length, k+2)), deck: deck });
+            start = -1;
+          }
+        }
+      });
+    }
+    findWaterBridges(roadCurves, 12);
+    findWaterBridges(spurCurves, 9);
+    // a river crossing inside a water stretch is already covered by its deck
+    bridges = bridges.filter(function(b){
+      return !waterBridges.some(function(wb){
+        return wb.pts.some(function(p){ return Math.hypot(p.x-b.x, p.y-b.y) < 12; });
+      });
+    });
+
     // forest clearings: circles around features, the ground inside road
     // loops, and corridors along rivers, roads and spurs
     forestClearings = {
@@ -1862,6 +1891,22 @@
              pathHit(d, c.key);
     }).join('');
     parts.push(spurMarkup);
+
+    // water bridges sit on the road but under the features; each layer is
+    // drawn for every bridge before the next, so bridges that meet or
+    // overlap (roads joining over water) merge into one deck
+    var bridgeLayers = [
+      function(b){ return 'stroke="#6b4a30" stroke-width="'+(b.deck+3.2)+'"'; },
+      function(b){ return 'stroke="#a9835a" stroke-width="'+b.deck+'"'; },
+      function(b){ return 'stroke="#6b4a30" stroke-opacity=".55" stroke-width="'+b.deck+'" stroke-dasharray="1.2 4.5"'; }
+    ];
+    if (waterBridges.length){
+      parts.push('<g fill="none" stroke-linejoin="round" style="pointer-events:none">');
+      bridgeLayers.forEach(function(layer){
+        waterBridges.forEach(function(b){ parts.push('<path d="'+polyD(b.pts)+'" '+layer(b)+'/>'); });
+      });
+      parts.push('</g>');
+    }
 
     // ponds (masked pattern rect showing merged blobs) + invisible drag hit circles
     var pext = window.MossTerrain ? window.MossTerrain.extent() : { x:0, y:0, w:W, h:H };
@@ -2271,6 +2316,22 @@
     return { line:line, r:r, box:box };
   }
 
+  // points every `step` px along a polyline
+  function resamplePolyline(line, step){
+    var out = [line[0]], carry = 0;
+    for (var i = 1; i < line.length; i++){
+      var a = line[i-1], b = line[i];
+      var len = Math.hypot(b.x-a.x, b.y-a.y), at = step - carry;
+      for (; at <= len; at += step){
+        out.push({ x: a.x + (b.x-a.x)*at/len, y: a.y + (b.y-a.y)*at/len });
+      }
+      carry = len - (at - step);
+    }
+    var last = line[line.length-1], tail = out[out.length-1];
+    if (tail.x !== last.x || tail.y !== last.y) out.push(last);
+    return out;
+  }
+
   function distToSegmentSq(px, py, a, b){
     var dx = b.x-a.x, dy = b.y-a.y, len = dx*dx + dy*dy;
     var t = len ? Math.max(0, Math.min(1, ((px-a.x)*dx + (py-a.y)*dy) / len)) : 0;
@@ -2331,7 +2392,8 @@
     });
   }
   if (window.MossTerrain){
-    window.MossTerrain.onTerrainChange(function(){ computeForestSpots(); drawForest(); });
+    // bridges follow the water, so new terrain needs a full render
+    window.MossTerrain.onTerrainChange(function(){ computeForestSpots(); render(); });
     window.MossTerrain.onObjectsChange(function(){ computeForestSpots(); drawForest(); });
   }
   var resizeRaf = null;
