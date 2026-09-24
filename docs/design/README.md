@@ -13,9 +13,10 @@ Each file is one tile of a terrain band: the band's background color plus the ob
 | Fields | [fields.svg](assets/terrain/fields.svg) | `#7FAC63` | `#7FAC63` | bushes and round trees |
 | Hills | [hills.svg](assets/terrain/hills.svg) | `#5B8757` | `#5B8757` | pine trees, bushes, round trees |
 | Mountains | [mountains.svg](assets/terrain/mountains.svg) | `#6E918B` | `#6E918B` | shadow ridges (`#435665` fading out) |
-| Snow | none yet | | `#AEC4C1` | |
+| Mountains, large | [mountains-large.svg](assets/terrain/mountains-large.svg) | `#6E918B` | `#6E918B` | big mountains, only where a 3×3 block of grid cells is all Mountains |
+| Snow | [snow-peak.svg](assets/terrain/snow-peak.svg) | `#6E918B` (drawn on the mountain color) | `#AEC4C1` | a snow-capped peak |
 
 ## Known differences
 
 - **Shore** reuses the Fields shapes in shore colors and adds grass tufts.
-- **Snow** has a color in the app but no design file.
+- **Snow** has no background swatch of its own; the peak file is drawn on the Mountains color.
