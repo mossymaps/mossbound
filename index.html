@@ -526,6 +526,11 @@
           <label for="optT4">Mountains ↔ Snow <output id="val-t4"></output></label>
           <input type="range" id="optT4" min="0" max="1" value="0.94" step="0.01">
         </div>
+        <div class="opt-group">Trees</div>
+        <div class="opt">
+          <label for="optSparse">Tree sparseness <output id="val-sparse"></output></label>
+          <input type="range" id="optSparse" min="0" max="1" value="0.2" step="0.01">
+        </div>
         <div class="opt-group">Grid</div>
         <div class="opt">
           <label for="optJitter">Grid jitter <output id="val-jitter"></output></label>
@@ -567,15 +572,16 @@
     t3: document.getElementById('optT3'),
     t4: document.getElementById('optT4'),
     jitter: document.getElementById('optJitter'),
+    sparse: document.getElementById('optSparse'),
     showGrid: document.getElementById('optShowGrid'),
   };
   // how many decimals each slider's readout shows
-  const DECIMALS = { cell: 0, scale: 2, oct: 0, lac: 1, gain: 2, t0: 2, t1: 2, t2: 2, t3: 2, t4: 2, jitter: 2 };
+  const DECIMALS = { cell: 0, scale: 2, oct: 0, lac: 1, gain: 2, t0: 2, t1: 2, t2: 2, t3: 2, t4: 2, jitter: 2, sparse: 2 };
 
   // Default settings per terrain type. Picking a type loads its defaults;
   // "Save default" stores the current controls as that type's defaults in
   // this browser, and they win over the built-in values.
-  const BUILTIN = { cell: 28, scale: 0.10, oct: 5, lac: 2.0, gain: 0.55, t0: 0.32, t1: 0.40, t2: 0.64, t3: 0.80, t4: 0.94, jitter: 0.35, showGrid: true };
+  const BUILTIN = { cell: 28, scale: 0.10, oct: 5, lac: 2.0, gain: 0.55, t0: 0.32, t1: 0.40, t2: 0.64, t3: 0.80, t4: 0.94, jitter: 0.35, sparse: 0.2, showGrid: true };
   const PRESETS = { valley: Object.assign({}, BUILTIN), island: Object.assign({}, BUILTIN) };
   const STORE_KEY = 'ridged-terrain-defaults-v1';
   try {
@@ -882,6 +888,7 @@
   let ext = { x: 0, y: 0, w: 0, h: 0 }, dpr = 1;
   let view = { zoom: 1, panX: 0, panY: 0 };
   const terrainListeners = [];
+  const objectListeners = [];
   // the last drawn grid, kept so bandAt() can answer what's under a point
   let grid = null;
 
@@ -1072,9 +1079,16 @@
     clearTimeout(saveTimer);
     updateSaveLabel();
   });
+  // tree sparseness only re-places the builder's ground objects, so it
+  // skips the (much slower) terrain redraw
   Object.values(els).forEach((el) => {
+    if (el === els.sparse) return;
     el.addEventListener('input', scheduleDraw);
     el.addEventListener('change', scheduleDraw);
+  });
+  els.sparse.addEventListener('input', () => {
+    syncReadouts();
+    objectListeners.forEach((fn) => fn());
   });
   document.getElementById('optRegen').addEventListener('click', () => {
     seed = Math.floor(Math.random() * 1e9);
@@ -1097,6 +1111,10 @@
     seed: () => seed,
     // called after every redraw, once bandAt() reflects the new terrain
     onTerrainChange(fn) { terrainListeners.push(fn); },
+    // 0 = every object spot filled, 1 = no objects
+    sparseness: () => parseFloat(els.sparse.value),
+    // called when the sparseness slider moves
+    onObjectsChange(fn) { objectListeners.push(fn); },
     // paint the on-screen map area (0,0)-(W,H) into another context, for PNG export
     drawWorld(target, outW, outH) {
       target.drawImage(canvas, -ext.x * dpr, -ext.y * dpr, window.innerWidth * dpr, window.innerHeight * dpr, 0, 0, outW, outH);
@@ -2153,16 +2171,19 @@
   // Shore, Fields and Hills each get their own set of objects (split out of
   // the per-band swatches), scattered on a jittered grid; w/h are each
   // object's size, measured from the middle of its base where it's anchored.
+  // `keep` weighs how full each band's grid gets; the tree sparseness slider
+  // scales it (a spot survives when its hash < keep * (1 - sparseness)), so
+  // moving the slider only adds or removes objects, never reshuffles them.
   var GROUND_OBJECTS = {
-    Shore:  { spacing:56, keep:0.7, items:[
+    Shore:  { spacing:56, keep:0.875, items:[
       { id:'shore-bushes', w:39, h:26 }, { id:'shore-tree',   w:34, h:42 },
       { id:'shore-grass',  w:17, h:11 }, { id:'shore-grass2', w:36, h:21 }
     ]},
-    Fields: { spacing:48, keep:0.8, items:[
+    Fields: { spacing:48, keep:1, items:[
       { id:'fields-bushes', w:39, h:26 }, { id:'fields-tree', w:34, h:42 },
       { id:'fields-tall',   w:30, h:54 }, { id:'fields-oak',  w:33, h:47 }
     ]},
-    Hills:  { spacing:46, keep:0.8, items:[
+    Hills:  { spacing:46, keep:1, items:[
       { id:'hills-pines',  w:37, h:67 }, { id:'hills-pine', w:28, h:58 },
       { id:'hills-shrubs', w:36, h:27 }, { id:'hills-oak',  w:33, h:47 },
       { id:'hills-tall',   w:30, h:54 }, { id:'hills-bushes', w:39, h:26 }
@@ -2170,7 +2191,7 @@
   };
 
   // Mountains share the Hills set
-  GROUND_OBJECTS.Mountains = { spacing:46, keep:0.8, items:GROUND_OBJECTS.Hills.items };
+  GROUND_OBJECTS.Mountains = { spacing:46, keep:1, items:GROUND_OBJECTS.Hills.items };
 
   // objects keep about half their width clear of a clearing's edge, so
   // canopies don't overhang it; this caps that margin
@@ -2191,7 +2212,7 @@
     forestSpots = [];
     var T = window.MossTerrain;
     if (!T) return;
-    var ext = T.extent(), seed = T.seed() | 0;
+    var ext = T.extent(), seed = T.seed() | 0, density = 1 - T.sparseness();
     var landUnder = function(x, y){ return !!GROUND_OBJECTS[T.bandAt(x, y)]; };
 
     Object.keys(GROUND_OBJECTS).forEach(function(band, bi){
@@ -2201,7 +2222,7 @@
       for (var gj = gj0; gj <= gj1; gj++){
         for (var gi = gi0; gi <= gi1; gi++){
           var salt = seed + bi * 7919;
-          if (hash01(gi, gj, salt) > set.keep) continue;
+          if (hash01(gi, gj, salt) >= set.keep * density) continue;
           var x = (gi + 0.1 + 0.8 * hash01(gi, gj, salt + 1)) * sp;
           var y = (gj + 0.1 + 0.8 * hash01(gi, gj, salt + 2)) * sp;
           if (T.bandAt(x, y) !== band) continue;
@@ -2311,6 +2332,7 @@
   }
   if (window.MossTerrain){
     window.MossTerrain.onTerrainChange(function(){ computeForestSpots(); drawForest(); });
+    window.MossTerrain.onObjectsChange(function(){ computeForestSpots(); drawForest(); });
   }
   var resizeRaf = null;
   window.addEventListener('resize', function(){
