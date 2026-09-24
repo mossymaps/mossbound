@@ -581,6 +581,10 @@
           <label for="optSparse">Tree sparseness <output id="val-sparse"></output></label>
           <input type="range" id="optSparse" min="0" max="1" value="0.2" step="0.01">
         </div>
+        <div class="opt">
+          <label for="optLoopSparse">Sparseness inside road loops <output id="val-loopSparse"></output></label>
+          <input type="range" id="optLoopSparse" min="0" max="1" value="1" step="0.01">
+        </div>
         <div class="opt-group">Grid</div>
         <div class="opt">
           <label for="optJitter">Grid jitter <output id="val-jitter"></output></label>
@@ -623,15 +627,16 @@
     t4: document.getElementById('optT4'),
     jitter: document.getElementById('optJitter'),
     sparse: document.getElementById('optSparse'),
+    loopSparse: document.getElementById('optLoopSparse'),
     showGrid: document.getElementById('optShowGrid'),
   };
   // how many decimals each slider's readout shows
-  const DECIMALS = { cell: 0, scale: 2, oct: 0, lac: 1, gain: 2, t0: 2, t1: 2, t2: 2, t3: 2, t4: 2, jitter: 2, sparse: 2 };
+  const DECIMALS = { cell: 0, scale: 2, oct: 0, lac: 1, gain: 2, t0: 2, t1: 2, t2: 2, t3: 2, t4: 2, jitter: 2, sparse: 2, loopSparse: 2 };
 
   // Default settings per terrain type. Picking a type loads its defaults;
   // "Save default" stores the current controls as that type's defaults in
   // this browser, and they win over the built-in values.
-  const BUILTIN = { cell: 28, scale: 0.10, oct: 5, lac: 2.0, gain: 0.55, t0: 0.32, t1: 0.40, t2: 0.64, t3: 0.80, t4: 0.94, jitter: 0.35, sparse: 0.2, showGrid: true };
+  const BUILTIN = { cell: 28, scale: 0.10, oct: 5, lac: 2.0, gain: 0.55, t0: 0.32, t1: 0.40, t2: 0.64, t3: 0.80, t4: 0.94, jitter: 0.35, sparse: 0.2, loopSparse: 1, showGrid: true };
   const PRESETS = { valley: Object.assign({}, BUILTIN), island: Object.assign({}, BUILTIN) };
   const STORE_KEY = 'ridged-terrain-defaults-v1';
   try {
@@ -1134,17 +1139,17 @@
     clearTimeout(saveTimer);
     updateSaveLabel();
   });
-  // tree sparseness only re-places the builder's ground objects, so it
-  // skips the (much slower) terrain redraw
+  // the sparseness sliders only re-place the builder's ground objects, so
+  // they skip the (much slower) terrain redraw
   Object.values(els).forEach((el) => {
-    if (el === els.sparse) return;
+    if (el === els.sparse || el === els.loopSparse) return;
     el.addEventListener('input', scheduleDraw);
     el.addEventListener('change', scheduleDraw);
   });
-  els.sparse.addEventListener('input', () => {
+  [els.sparse, els.loopSparse].forEach((el) => el.addEventListener('input', () => {
     syncReadouts();
     objectListeners.forEach((fn) => fn());
-  });
+  }));
   document.getElementById('optRegen').addEventListener('click', () => {
     seed = Math.floor(Math.random() * 1e9);
     scheduleDraw();
@@ -1168,7 +1173,9 @@
     onTerrainChange(fn) { terrainListeners.push(fn); },
     // 0 = every object spot filled, 1 = no objects
     sparseness: () => parseFloat(els.sparse.value),
-    // called when the sparseness slider moves
+    // share of objects dropped from ground enclosed by roads (1 = empty)
+    loopSparseness: () => parseFloat(els.loopSparse.value),
+    // called when either sparseness slider moves
     onObjectsChange(fn) { objectListeners.push(fn); },
     // paint the on-screen map area (0,0)-(W,H) into another context, for PNG export
     drawWorld(target, outW, outH) {
@@ -2358,7 +2365,8 @@
           // so nothing stands in water or snow; water objects stay in water
           var half = o.w * 0.4, under = set.onWater ? waterUnder : landUnder;
           if (!under(x - half, y) || !under(x + half, y) || !under(x, y - o.h / 2)) continue;
-          forestSpots.push({ use:'obj-'+o.id, x:x, y:y, base:y,
+          // h decides whether it survives inside a road loop
+          forestSpots.push({ use:'obj-'+o.id, x:x, y:y, base:y, h:hash01(gi, gj, salt + 4),
                              cx:x, cy:y - o.h / 2, pad:Math.min(MAX_PAD, o.w / 2) });
         }
       }
@@ -2447,16 +2455,24 @@
         if (distToSegmentSq(x, y, cor.line[k-1], cor.line[k]) < lim) return true;
       }
     }
-    for (i = 0; i < c.polygons.length; i++){
-      if (c.polygons[i].length > 2 && pointInPoly(x, y, c.polygons[i])) return true;
+    return false;
+  }
+
+  // is (x, y) on ground enclosed by a road loop?
+  function inRoadLoop(x, y){
+    var polys = forestClearings.polygons;
+    for (var i = 0; i < polys.length; i++){
+      if (polys[i].length > 2 && pointInPoly(x, y, polys[i])) return true;
     }
     return false;
   }
 
   function drawForest(){
     var out = [];
+    var loopSparse = window.MossTerrain ? window.MossTerrain.loopSparseness() : 1;
     forestSpots.forEach(function(t){
       if (inClearing(t.cx, t.cy, t.pad)) return;
+      if (t.h < loopSparse && inRoadLoop(t.cx, t.cy)) return;
       out.push('<use href="#'+t.use+'" x="'+t.x.toFixed(1)+'" y="'+t.y.toFixed(1)+'"/>');
     });
     var html = out.join('');
