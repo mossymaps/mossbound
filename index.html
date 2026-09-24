@@ -862,22 +862,25 @@
     return (h ^ (h >>> 16)) >>> 0;
   }
 
+  // the grid sits inside the canvas, centered, with room for jitter and the
+  // border stroke, so its outer edge is part of the map rather than cut off
   function generateGrid(width, height, cellSize, jitter, noiseX, noiseY) {
-    const margin = cellSize * 1.5;
-    const cols = Math.ceil((width + margin * 2) / cellSize);
-    const rows = Math.ceil((height + margin * 2) / cellSize);
+    const inset = cellSize * jitter + BORDER_WIDTH / 2;
+    const cols = Math.max(1, Math.floor((width - inset * 2) / cellSize));
+    const rows = Math.max(1, Math.floor((height - inset * 2) / cellSize));
+    const x0 = (width - cols * cellSize) / 2, y0 = (height - rows * cellSize) / 2;
     const points = [];
     for (let j = 0; j <= rows; j++) {
       const row = [];
       for (let i = 0; i <= cols; i++) {
         row.push({
-          x: -margin + i * cellSize + noiseX(i * 0.9, j * 0.9) * cellSize * jitter,
-          y: -margin + j * cellSize + noiseY(i * 0.9, j * 0.9) * cellSize * jitter,
+          x: x0 + i * cellSize + noiseX(i * 0.9, j * 0.9) * cellSize * jitter,
+          y: y0 + j * cellSize + noiseY(i * 0.9, j * 0.9) * cellSize * jitter,
         });
       }
       points.push(row);
     }
-    return { points, cols, rows };
+    return { points, cols, rows, x0, y0 };
   }
 
   const ground = document.getElementById('ground');
@@ -890,6 +893,8 @@
 
   // must match the builder's zoom-out limit and pan margin
   const MIN_ZOOM = 0.6, PAN_MARGIN = 160;
+  // stroke around the outermost tiles
+  const BORDER_COLOR = '#C5C39E', BORDER_WIDTH = 10;
   const MAX_PIXELS = 16e6;
   let ext = { x: 0, y: 0, w: 0, h: 0 }, dpr = 1;
   let view = { zoom: 1, panX: 0, panY: 0 };
@@ -945,8 +950,8 @@
   function bandAt(x, y) {
     if (!grid) return null;
     const cx = x - ext.x, cy = y - ext.y;
-    const i0 = Math.floor((cx + grid.margin) / grid.cell);
-    const j0 = Math.floor((cy + grid.margin) / grid.cell);
+    const i0 = Math.floor((cx - grid.x0) / grid.cell);
+    const j0 = Math.floor((cy - grid.y0) / grid.cell);
     // jitter can push a point into a neighboring cell's quad
     for (let dj = -1; dj <= 1; dj++) {
       for (let di = -1; di <= 1; di++) {
@@ -1000,7 +1005,7 @@
     const perlinJY = makePerlin2D(seed + 202);
     const ridged = makeRidgedMF(perlinTerrain, { octaves: s.oct, lacunarity: s.lac, gain: s.gain });
 
-    const { points, cols, rows } = generateGrid(w, h, s.cell, s.jitter, perlinJX, perlinJY);
+    const { points, cols, rows, x0, y0 } = generateGrid(w, h, s.cell, s.jitter, perlinJX, perlinJY);
     const path = terrainType === 'valley' ? makeValleyPath(cols, rows, seed) : null;
 
     // sample every cell's band index once, at its unjittered center
@@ -1013,11 +1018,25 @@
       }
       levels.push(row);
     }
-    grid = { points, levels, cols, rows, bands, cell: s.cell, margin: s.cell * 1.5, seed };
+    grid = { points, levels, cols, rows, bands, cell: s.cell, x0, y0, seed };
+
+    // outline of the whole grid, clockwise along its outermost cell edges
+    const outline = points[0].slice();
+    for (let j = 1; j <= rows; j++) outline.push(points[j][cols]);
+    for (let i = cols - 1; i >= 0; i--) outline.push(points[rows][i]);
+    for (let j = rows - 1; j > 0; j--) outline.push(points[j][0]);
+    const tracePath = (pts) => {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k].x, pts[k].y);
+      ctx.closePath();
+    };
 
     // the base layer is all water; each higher band is stacked on top of it
+    ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = bands[0].color;
-    ctx.fillRect(0, 0, w, h);
+    tracePath(outline);
+    ctx.fill();
 
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
@@ -1056,6 +1075,12 @@
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+
+    ctx.strokeStyle = BORDER_COLOR;
+    ctx.lineWidth = BORDER_WIDTH;
+    ctx.lineJoin = 'round';
+    tracePath(outline);
+    ctx.stroke();
 
     terrainListeners.forEach((fn) => fn());
 
@@ -1169,7 +1194,10 @@
     ];
   }
 
-  var state = { features: defaultFeatures(), history: [], mode: null, zoom: 1, panX: 0, panY: 0, pathSeeds: {} };
+  // MIN_ZOOM must match the terrain's zoom-out limit (it sizes the ground to
+  // it); the map opens, and resets to, fully zoomed in
+  var MIN_ZOOM = 0.6, MAX_ZOOM = 1.8, BUTTON_STEP = 1.2;
+  var state = { features: defaultFeatures(), history: [], mode: null, zoom: MAX_ZOOM, panX: 0, panY: 0, pathSeeds: {} };
 
   function snapshot(){ return JSON.parse(JSON.stringify({ features: state.features, pathSeeds: state.pathSeeds })); }
   function pushHistory(){
@@ -2095,8 +2123,6 @@
     svg.setAttribute('viewBox', vbX+' '+vbY+' '+vbW+' '+vbH);
     if (window.MossTerrain) window.MossTerrain.setView(state.zoom, state.panX, state.panY);
   }
-  // MIN_ZOOM must match the terrain's zoom-out limit (it sizes the ground to it)
-  var MIN_ZOOM = 0.6, MAX_ZOOM = 1.8, BUTTON_STEP = 1.2;
   // zoom to `z`, keeping the map point under screen point (sx, sy) in place
   function zoomAt(z, sx, sy){
     z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
@@ -2109,28 +2135,15 @@
   }
   document.getElementById('zoomIn').addEventListener('click', function(){ zoomAt(state.zoom*BUTTON_STEP, W/2, H/2); });
   document.getElementById('zoomOut').addEventListener('click', function(){ zoomAt(state.zoom/BUTTON_STEP, W/2, H/2); });
-  document.getElementById('centerBtn').addEventListener('click', function(){ state.zoom=1; state.panX=0; state.panY=0; applyZoom(); });
+  document.getElementById('centerBtn').addEventListener('click', function(){ state.zoom=MAX_ZOOM; state.panX=0; state.panY=0; applyZoom(); });
 
-  // Wheel: a trackpad pinch (and ctrl + wheel) arrives with ctrlKey set and
-  // zooms at the cursor. A mouse wheel also zooms; a trackpad's two-finger
-  // scroll pans. Mouse wheels send line-mode or chunky whole-number deltas
-  // on one axis, trackpads send small or fractional ones, often on both.
-  function looksLikeMouseWheel(e){
-    if (e.deltaMode !== 0) return true;
-    return e.deltaX === 0 && Math.abs(e.deltaY) >= 40 && Number.isInteger(e.deltaY);
-  }
+  // scrolling zooms at the cursor. A trackpad pinch (and ctrl + wheel) sends
+  // small deltas with ctrlKey set, so it gets a stronger response.
   svg.addEventListener('wheel', function(e){
     e.preventDefault(); // keep the browser from zooming or scrolling the page
     var dy = e.deltaMode === 1 ? e.deltaY*16 : e.deltaMode === 2 ? e.deltaY*H : e.deltaY;
-    if (e.ctrlKey){
-      zoomAt(state.zoom*Math.exp(-dy*0.01), e.clientX, e.clientY);
-    } else if (looksLikeMouseWheel(e)){
-      zoomAt(state.zoom*Math.exp(-Math.max(-100, Math.min(100, dy))*0.002), e.clientX, e.clientY);
-    } else {
-      state.panX -= e.deltaX/state.zoom;
-      state.panY -= e.deltaY/state.zoom;
-      applyZoom();
-    }
+    var rate = e.ctrlKey ? 0.01 : 0.002;
+    zoomAt(state.zoom*Math.exp(-Math.max(-100, Math.min(100, dy))*rate), e.clientX, e.clientY);
   }, { passive:false });
   // Safari reports trackpad pinches as gesture events rather than ctrl + wheel
   (function(){
