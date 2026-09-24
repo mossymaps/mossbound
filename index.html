@@ -33,7 +33,7 @@
   }
 
   /* ---------- terrain background (under the builder) ---------- */
-  #ground{ position:fixed; pointer-events:none; }
+  #ground, #clouds{ position:fixed; pointer-events:none; }
   #terrain{ position:absolute; inset:0; width:100%; height:100%; display:block; }
   .cloud{
     position:absolute; height:34px; border-radius:999px;
@@ -239,12 +239,6 @@
 
   <div id="ground" aria-hidden="true">
     <canvas id="terrain"></canvas>
-    <div class="cloud" style="left:8%;top:12%;width:300px;animation-duration:70s;animation-delay:-10s"></div>
-    <div class="cloud" style="left:55%;top:20%;width:220px;animation-duration:95s;animation-delay:-40s"></div>
-    <div class="cloud" style="left:20%;top:48%;width:340px;animation-duration:110s;animation-delay:-65s"></div>
-    <div class="cloud" style="left:70%;top:58%;width:260px;animation-duration:85s;animation-delay:-20s"></div>
-    <div class="cloud" style="left:35%;top:78%;width:200px;animation-duration:100s;animation-delay:-55s"></div>
-    <div class="cloud" style="left:80%;top:86%;width:320px;animation-duration:120s;animation-delay:-90s"></div>
   </div>
 
 <div id="app">
@@ -410,6 +404,16 @@
     <g id="forest" style="pointer-events:none"></g>
     <g id="world"></g>
   </svg>
+  <!-- clouds drift above the map (they pan and zoom with the terrain) but
+       under the day/night tint -->
+  <div id="clouds" aria-hidden="true">
+    <div class="cloud" style="left:8%;top:12%;width:300px;animation-duration:70s;animation-delay:-10s"></div>
+    <div class="cloud" style="left:55%;top:20%;width:220px;animation-duration:95s;animation-delay:-40s"></div>
+    <div class="cloud" style="left:20%;top:48%;width:340px;animation-duration:110s;animation-delay:-65s"></div>
+    <div class="cloud" style="left:70%;top:58%;width:260px;animation-duration:85s;animation-delay:-20s"></div>
+    <div class="cloud" style="left:35%;top:78%;width:200px;animation-duration:100s;animation-delay:-55s"></div>
+    <div class="cloud" style="left:80%;top:86%;width:320px;animation-duration:120s;animation-delay:-90s"></div>
+  </div>
   <div id="tintRect"></div>
 
   <button id="hamburger" class="chrome-btn" aria-label="Menu" aria-haspopup="true" aria-expanded="false">
@@ -877,6 +881,8 @@
   }
 
   const ground = document.getElementById('ground');
+  // the cloud layer sits above the builder but moves with the terrain
+  const groundLayers = [ground, document.getElementById('clouds')];
   const canvas = document.getElementById('terrain');
   const ctx = canvas.getContext('2d');
   const legendEl = document.getElementById('optLegend');
@@ -963,18 +969,21 @@
     const ey = Math.ceil(h / (2 * MIN_ZOOM) - h / 2 + PAN_MARGIN);
     ext = { x: -ex, y: -ey, w: w + 2 * ex, h: h + 2 * ey };
     dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_PIXELS / (ext.w * ext.h)));
-    ground.style.left = ext.x + 'px';
-    ground.style.top = ext.y + 'px';
-    ground.style.width = ext.w + 'px';
-    ground.style.height = ext.h + 'px';
-    ground.style.transformOrigin = (ex + w / 2) + 'px ' + (ey + h / 2) + 'px';
+    groundLayers.forEach((el) => {
+      el.style.left = ext.x + 'px';
+      el.style.top = ext.y + 'px';
+      el.style.width = ext.w + 'px';
+      el.style.height = ext.h + 'px';
+      el.style.transformOrigin = (ex + w / 2) + 'px ' + (ey + h / 2) + 'px';
+    });
     applyView();
   }
 
   // mirrors the builder's viewBox math: a map point x lands on screen at
   // (x + panX - W/2) * zoom + W/2
   function applyView() {
-    ground.style.transform = 'scale(' + view.zoom + ') translate(' + view.panX + 'px,' + view.panY + 'px)';
+    const t = 'scale(' + view.zoom + ') translate(' + view.panX + 'px,' + view.panY + 'px)';
+    groundLayers.forEach((el) => { el.style.transform = t; });
   }
 
   function draw() {
@@ -1812,33 +1821,47 @@
     findBridges(roadCurves);
     findBridges(spurCurves);
 
-    // bridges over the terrain's water: wherever a road or spur runs across
-    // the Water band, a plank deck covers that whole stretch plus a little
-    // bank on each side
+    // Roads cross the terrain's water on straight bridges: each road and
+    // spur is traced along its drawn curve, and every stretch over the Water
+    // band (plus a little bank on each side) is replaced by a straight span
+    // from bank to bank, which gets a plank deck. c.line is the final
+    // centerline and c.d the path actually drawn.
     var waterBridges = [];
-    function findWaterBridges(curves, deck){
-      if (!window.MossTerrain) return;
+    function bridgeWaterCrossings(curves, deck){
       curves.forEach(function(rc){
-        if (rc.pts.length < 2) return;
-        var line = resamplePolyline(sampleCatmullOpen(rc.pts, 8), 3);
-        var start = -1;
+        var line = curveLine(rc.pts);
+        rc.line = line; rc.d = catmullRomOpen(rc.pts, 1);
+        if (!window.MossTerrain || rc.pts.length < 2) return;
+        line = resamplePolyline(line, 3);
+        var runs = [], start = -1;
         for (var k = 0; k <= line.length; k++){
           var wet = k < line.length && window.MossTerrain.bandAt(line[k].x, line[k].y) === 'Water';
           if (wet && start < 0) start = k;
           if (!wet && start >= 0){
-            waterBridges.push({ pts: line.slice(Math.max(0, start-2), Math.min(line.length, k+2)), deck: deck });
+            var from = Math.max(0, start-2), to = Math.min(line.length-1, k+1);
+            var prev = runs[runs.length-1];
+            if (prev && from <= prev.to) prev.to = to; else runs.push({ from:from, to:to });
             start = -1;
           }
         }
+        if (!runs.length) return;
+        var out = [], next = 0;
+        runs.forEach(function(r){
+          out = out.concat(line.slice(next, r.from + 1));
+          out.push(line[r.to]);
+          next = r.to + 1;
+          waterBridges.push({ pts:[line[r.from], line[r.to]], deck:deck });
+        });
+        out = out.concat(line.slice(next));
+        rc.line = out;
+        rc.d = polyD(out.map(function(p){ return { x:Math.round(p.x*10)/10, y:Math.round(p.y*10)/10 }; }));
       });
     }
-    findWaterBridges(roadCurves, 12);
-    findWaterBridges(spurCurves, 9);
-    // a river crossing inside a water stretch is already covered by its deck
+    bridgeWaterCrossings(roadCurves, 12);
+    bridgeWaterCrossings(spurCurves, 9);
+    // a river crossing on a straight span is already covered by its deck
     bridges = bridges.filter(function(b){
-      return !waterBridges.some(function(wb){
-        return wb.pts.some(function(p){ return Math.hypot(p.x-b.x, p.y-b.y) < 12; });
-      });
+      return !waterBridges.some(function(wb){ return distToSegmentSq(b.x, b.y, wb.pts[0], wb.pts[1]) < 144; });
     });
 
     // forest clearings: circles around features, the ground inside road
@@ -1850,9 +1873,9 @@
       polygons: enclosedLoopFills,
       corridors: []
     };
-    riverCurves.forEach(function(c){ forestClearings.corridors.push(corridorOf(c.pts, 12)); });
-    roadCurves.forEach(function(c){ forestClearings.corridors.push(corridorOf(c.pts, 12)); });
-    spurCurves.forEach(function(c){ forestClearings.corridors.push(corridorOf(c.pts, 9)); });
+    riverCurves.forEach(function(c){ forestClearings.corridors.push(corridorOf(curveLine(c.pts), 12)); });
+    roadCurves.forEach(function(c){ forestClearings.corridors.push(corridorOf(c.line, 12)); });
+    spurCurves.forEach(function(c){ forestClearings.corridors.push(corridorOf(c.line, 9)); });
     drawForest();
 
     // pond mask (goo merge)
@@ -1878,7 +1901,7 @@
     parts.push(riverMarkup);
 
     var roadMarkup = roadCurves.map(function(c){
-      var d = catmullRomOpen(c.pts, 1);
+      var d = c.d;
       return '<path d="'+d+'" fill="none" stroke="#948aa8" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>'+
              '<path d="'+d+'" fill="none" stroke="#bbb2cb" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="1 10"/>'+
              pathHit(d, c.key);
@@ -1886,7 +1909,7 @@
     parts.push(roadMarkup);
 
     var spurMarkup = spurCurves.map(function(c){
-      var d = catmullRomOpen(c.pts,1);
+      var d = c.d;
       return '<path d="'+d+'" fill="none" stroke="#948aa8" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>'+
              pathHit(d, c.key);
     }).join('');
@@ -2303,10 +2326,12 @@
     return out;
   }
 
-  // a clearing band of radius r around a curve, with its bounding box so
+  // a Catmull-Rom curve's points as a polyline
+  function curveLine(pts){ return pts.length < 2 ? pts.slice() : sampleCatmullOpen(pts, 8); }
+
+  // a clearing band of radius r around a polyline, with its bounding box so
   // most trees can skip it without measuring every segment
-  function corridorOf(pts, r){
-    var line = pts.length < 2 ? pts : sampleCatmullOpen(pts, 8);
+  function corridorOf(line, r){
     var pad = r + MAX_PAD;
     var box = { x0:Infinity, y0:Infinity, x1:-Infinity, y1:-Infinity };
     line.forEach(function(p){
