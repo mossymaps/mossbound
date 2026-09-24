@@ -530,10 +530,14 @@
           <label for="optT4">Mountains ↔ Snow <output id="val-t4"></output></label>
           <input type="range" id="optT4" min="0" max="1" value="0.94" step="0.01">
         </div>
-        <div class="opt-group">Trees</div>
+        <div class="opt-group">Trees &amp; roads</div>
         <div class="opt">
           <label for="optSparse">Tree sparseness <output id="val-sparse"></output></label>
           <input type="range" id="optSparse" min="0" max="1" value="0.2" step="0.01">
+        </div>
+        <div class="opt">
+          <label for="optWaterCost">Water crossing cost <output id="val-waterCost"></output></label>
+          <input type="range" id="optWaterCost" min="1" max="40" value="14" step="1">
         </div>
         <div class="opt-group">Grid</div>
         <div class="opt">
@@ -577,15 +581,16 @@
     t4: document.getElementById('optT4'),
     jitter: document.getElementById('optJitter'),
     sparse: document.getElementById('optSparse'),
+    waterCost: document.getElementById('optWaterCost'),
     showGrid: document.getElementById('optShowGrid'),
   };
   // how many decimals each slider's readout shows
-  const DECIMALS = { cell: 0, scale: 2, oct: 0, lac: 1, gain: 2, t0: 2, t1: 2, t2: 2, t3: 2, t4: 2, jitter: 2, sparse: 2 };
+  const DECIMALS = { cell: 0, scale: 2, oct: 0, lac: 1, gain: 2, t0: 2, t1: 2, t2: 2, t3: 2, t4: 2, jitter: 2, sparse: 2, waterCost: 0 };
 
   // Default settings per terrain type. Picking a type loads its defaults;
   // "Save default" stores the current controls as that type's defaults in
   // this browser, and they win over the built-in values.
-  const BUILTIN = { cell: 28, scale: 0.10, oct: 5, lac: 2.0, gain: 0.55, t0: 0.32, t1: 0.40, t2: 0.64, t3: 0.80, t4: 0.94, jitter: 0.35, sparse: 0.2, showGrid: true };
+  const BUILTIN = { cell: 28, scale: 0.10, oct: 5, lac: 2.0, gain: 0.55, t0: 0.32, t1: 0.40, t2: 0.64, t3: 0.80, t4: 0.94, jitter: 0.35, sparse: 0.2, waterCost: 14, showGrid: true };
   const PRESETS = { valley: Object.assign({}, BUILTIN), island: Object.assign({}, BUILTIN) };
   const STORE_KEY = 'ridged-terrain-defaults-v1';
   try {
@@ -895,6 +900,7 @@
   let view = { zoom: 1, panX: 0, panY: 0 };
   const terrainListeners = [];
   const objectListeners = [];
+  const routingListeners = [];
   // the last drawn grid, kept so bandAt() can answer what's under a point
   let grid = null;
 
@@ -1088,16 +1094,20 @@
     clearTimeout(saveTimer);
     updateSaveLabel();
   });
-  // tree sparseness only re-places the builder's ground objects, so it
-  // skips the (much slower) terrain redraw
+  // tree sparseness and water crossing cost only change what the builder
+  // draws on top, so they skip the (much slower) terrain redraw
   Object.values(els).forEach((el) => {
-    if (el === els.sparse) return;
+    if (el === els.sparse || el === els.waterCost) return;
     el.addEventListener('input', scheduleDraw);
     el.addEventListener('change', scheduleDraw);
   });
   els.sparse.addEventListener('input', () => {
     syncReadouts();
     objectListeners.forEach((fn) => fn());
+  });
+  els.waterCost.addEventListener('input', () => {
+    syncReadouts();
+    routingListeners.forEach((fn) => fn());
   });
   document.getElementById('optRegen').addEventListener('click', () => {
     seed = Math.floor(Math.random() * 1e9);
@@ -1124,6 +1134,10 @@
     sparseness: () => parseFloat(els.sparse.value),
     // called when the sparseness slider moves
     onObjectsChange(fn) { objectListeners.push(fn); },
+    // how many land steps one step across water is worth to a road
+    waterCost: () => parseFloat(els.waterCost.value),
+    // called when the water crossing cost slider moves
+    onRoutingChange(fn) { routingListeners.push(fn); },
     // paint the on-screen map area (0,0)-(W,H) into another context, for PNG export
     drawWorld(target, outW, outH) {
       target.drawImage(canvas, -ext.x * dpr, -ext.y * dpr, window.innerWidth * dpr, window.innerHeight * dpr, 0, 0, outW, outH);
@@ -1679,6 +1693,11 @@
     // together anywhere along their length, then re-check pond clearance
     separateAllPaths(placedRoadPts, 30, 3);
     placedRoadPts.forEach(function(p){ nudgeOutOfPonds(p, ponds, 18); });
+
+    // where a road or spur would cross the terrain's water, re-route that
+    // stretch to go around it or cross where it's narrowest
+    roadCurves.forEach(rerouteAroundWater);
+    spurCurves.forEach(rerouteAroundWater);
 
     // enclosed loops (redundant roads create a cycle around a town cluster) —
     // trace the loop's actual road curves and clear the forest inside it
@@ -2357,6 +2376,183 @@
     return out;
   }
 
+  /* ---------------- water-aware road routing ---------------- */
+  // Roads keep their hand-drawn meander on land; only the stretch around a
+  // water crossing is re-planned, on a coarse grid of the terrain where a
+  // water cell costs as much as several land cells (the "Water crossing
+  // cost" slider). So a road walks around
+  // water when the detour is reasonable and otherwise crosses where it's
+  // narrowest, and the bridge pass then lays a short straight span there.
+  var WATER_CELL = 10;      // grid resolution, px
+  var ROUTE_MARGIN = 140;   // road length re-planned on each side of a crossing
+  var ROUTE_PAD = 260;      // how far a detour may wander outside that stretch
+  var waterGrid = null, routeCache = {};
+
+  function resetWaterGrid(){ waterGrid = null; routeCache = {}; }
+
+  function getWaterGrid(){
+    if (waterGrid) return waterGrid;
+    var T = window.MossTerrain;
+    if (!T) return null;
+    var ext = T.extent(), C = WATER_CELL;
+    var cols = Math.ceil(ext.w / C), rows = Math.ceil(ext.h / C);
+    var wet = new Uint8Array(cols * rows);
+    for (var j = 0; j < rows; j++){
+      for (var i = 0; i < cols; i++){
+        wet[j*cols + i] = T.bandAt(ext.x + (i+0.5)*C, ext.y + (j+0.5)*C) === 'Water' ? 1 : 0;
+      }
+    }
+    waterGrid = { x0:ext.x, y0:ext.y, cols:cols, rows:rows, wet:wet };
+    return waterGrid;
+  }
+
+  function isWet(g, x, y){
+    var i = Math.floor((x - g.x0) / WATER_CELL), j = Math.floor((y - g.y0) / WATER_CELL);
+    if (i < 0 || j < 0 || i >= g.cols || j >= g.rows) return false;
+    return g.wet[j*g.cols + i] === 1;
+  }
+
+  // does the straight line a->b stay on land?
+  function dryLine(g, a, b){
+    var steps = Math.ceil(Math.hypot(b.x-a.x, b.y-a.y) / 4);
+    for (var k = 1; k < steps; k++){
+      if (isWet(g, a.x + (b.x-a.x)*k/steps, a.y + (b.y-a.y)*k/steps)) return false;
+    }
+    return true;
+  }
+
+  // cheapest path A->B (A* over the grid, 8 directions), inside a window
+  // around the two points; returns tidied points from A to B, or null
+  function planRoute(g, A, B){
+    var C = WATER_CELL;
+    var wi0 = Math.max(0, Math.floor((Math.min(A.x, B.x) - ROUTE_PAD - g.x0) / C));
+    var wj0 = Math.max(0, Math.floor((Math.min(A.y, B.y) - ROUTE_PAD - g.y0) / C));
+    var wi1 = Math.min(g.cols-1, Math.floor((Math.max(A.x, B.x) + ROUTE_PAD - g.x0) / C));
+    var wj1 = Math.min(g.rows-1, Math.floor((Math.max(A.y, B.y) + ROUTE_PAD - g.y0) / C));
+    var W = wi1 - wi0 + 1, H = wj1 - wj0 + 1;
+    if (W < 1 || H < 1) return null;
+    var local = function(p){
+      var i = Math.max(wi0, Math.min(wi1, Math.floor((p.x - g.x0) / C)));
+      var j = Math.max(wj0, Math.min(wj1, Math.floor((p.y - g.y0) / C)));
+      return (j - wj0) * W + (i - wi0);
+    };
+    var start = local(A), goal = local(B);
+    var gx = goal % W, gy = Math.floor(goal / W);
+    var N = W * H;
+    var cost = new Float64Array(N).fill(Infinity), came = new Int32Array(N).fill(-1), done = new Uint8Array(N);
+    var wetAt = function(n){ return g.wet[(Math.floor(n / W) + wj0) * g.cols + (n % W) + wi0]; };
+    var h = function(n){
+      var dx = Math.abs(n % W - gx), dy = Math.abs(Math.floor(n / W) - gy);
+      return Math.max(dx, dy) + 0.4142 * Math.min(dx, dy);
+    };
+    // binary min-heap of nodes keyed by f
+    var heapN = [], heapF = [];
+    function push(n, f){
+      var k = heapN.length; heapN.push(n); heapF.push(f);
+      while (k > 0){
+        var up = (k - 1) >> 1;
+        if (heapF[up] <= f) break;
+        heapN[k] = heapN[up]; heapF[k] = heapF[up]; k = up;
+      }
+      heapN[k] = n; heapF[k] = f;
+    }
+    function pop(){
+      var top = heapN[0], lastN = heapN.pop(), lastF = heapF.pop();
+      if (heapN.length){
+        var k = 0, len = heapN.length;
+        while (true){
+          var c = 2*k + 1;
+          if (c >= len) break;
+          if (c + 1 < len && heapF[c+1] < heapF[c]) c++;
+          if (heapF[c] >= lastF) break;
+          heapN[k] = heapN[c]; heapF[k] = heapF[c]; k = c;
+        }
+        heapN[k] = lastN; heapF[k] = lastF;
+      }
+      return top;
+    }
+    var waterCost = window.MossTerrain ? window.MossTerrain.waterCost() : 14;
+    var DIRS = [[1,0,1],[-1,0,1],[0,1,1],[0,-1,1],[1,1,1.4142],[1,-1,1.4142],[-1,1,1.4142],[-1,-1,1.4142]];
+    cost[start] = 0; push(start, h(start));
+    while (heapN.length){
+      var n = pop();
+      if (done[n]) continue;
+      done[n] = 1;
+      if (n === goal) break;
+      var nx = n % W, ny = Math.floor(n / W);
+      for (var d = 0; d < 8; d++){
+        var mx = nx + DIRS[d][0], my = ny + DIRS[d][1];
+        if (mx < 0 || my < 0 || mx >= W || my >= H) continue;
+        var m = my * W + mx;
+        if (done[m]) continue;
+        var c2 = cost[n] + DIRS[d][2] * (wetAt(m) ? waterCost : 1);
+        if (c2 < cost[m]){ cost[m] = c2; came[m] = n; push(m, c2 + h(m)); }
+      }
+    }
+    if (!done[goal]) return null;
+
+    var cells = [];
+    for (var at = goal; at !== -1; at = came[at]) cells.push(at);
+    cells.reverse();
+    var pts = cells.map(function(n){
+      return { x: g.x0 + ((n % W) + wi0 + 0.5) * C, y: g.y0 + (Math.floor(n / W) + wj0 + 0.5) * C };
+    });
+    pts[0] = A; pts[pts.length-1] = B;
+
+    // pull the staircase tight: on land, jump to the farthest point still
+    // reachable in a straight dry line; through water, keep every step
+    var out = [pts[0]], i = 0;
+    while (i < pts.length - 1){
+      var j = i + 1;
+      if (!isWet(g, pts[i].x, pts[i].y)){
+        for (var k = i + 1; k < pts.length && !isWet(g, pts[k].x, pts[k].y) && dryLine(g, pts[i], pts[k]); k++) j = k;
+      }
+      out.push(pts[j]); i = j;
+    }
+    // soften the corners (Chaikin), keeping the ends in place
+    for (var it = 0; it < 2; it++){
+      var sm = [out[0]];
+      for (var q = 0; q < out.length - 1; q++){
+        var p0 = out[q], p1 = out[q+1];
+        if (q > 0) sm.push({ x: p0.x*0.75 + p1.x*0.25, y: p0.y*0.75 + p1.y*0.25 });
+        if (q < out.length - 2) sm.push({ x: p0.x*0.25 + p1.x*0.75, y: p0.y*0.25 + p1.y*0.75 });
+      }
+      sm.push(out[out.length-1]);
+      out = sm;
+    }
+    return out;
+  }
+
+  function rerouteAroundWater(rc){
+    var g = getWaterGrid();
+    if (!g || rc.pts.length < 2) return;
+    var STEP = 4;
+    var line = resamplePolyline(curveLine(rc.pts), STEP);
+    var n = line.length, wet = line.map(function(p){ return isWet(g, p.x, p.y); });
+    var margin = Math.round(ROUTE_MARGIN / STEP), spans = [];
+    for (var k = 0; k < n; k++){
+      if (!wet[k] || (k > 0 && wet[k-1])) continue;
+      var e = k;
+      while (e + 1 < n && wet[e+1]) e++;
+      var a = Math.max(0, k - margin), b = Math.min(n - 1, e + margin);
+      var prev = spans[spans.length-1];
+      if (prev && a <= prev.b) prev.b = b; else spans.push({ a:a, b:b });
+      k = e;
+    }
+    if (!spans.length) return;
+    var out = [], next = 0;
+    spans.forEach(function(sp){
+      out = out.concat(line.slice(next, sp.a));
+      var A = line[sp.a], B = line[sp.b];
+      var key = [A.x, A.y, B.x, B.y].map(Math.round).join(',');
+      if (!(key in routeCache)) routeCache[key] = planRoute(g, A, B);
+      out = out.concat(routeCache[key] || line.slice(sp.a, sp.b + 1));
+      next = sp.b + 1;
+    });
+    out = out.concat(line.slice(next));
+    rc.pts = resamplePolyline(out, 8);
+  }
+
   function distToSegmentSq(px, py, a, b){
     var dx = b.x-a.x, dy = b.y-a.y, len = dx*dx + dy*dy;
     var t = len ? Math.max(0, Math.min(1, ((px-a.x)*dx + (py-a.y)*dy) / len)) : 0;
@@ -2418,8 +2614,9 @@
   }
   if (window.MossTerrain){
     // bridges follow the water, so new terrain needs a full render
-    window.MossTerrain.onTerrainChange(function(){ computeForestSpots(); render(); });
+    window.MossTerrain.onTerrainChange(function(){ resetWaterGrid(); computeForestSpots(); render(); });
     window.MossTerrain.onObjectsChange(function(){ computeForestSpots(); drawForest(); });
+    window.MossTerrain.onRoutingChange(function(){ routeCache = {}; render(); });
   }
   var resizeRaf = null;
   window.addEventListener('resize', function(){
