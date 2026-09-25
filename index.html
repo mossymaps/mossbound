@@ -862,22 +862,25 @@
     return (h ^ (h >>> 16)) >>> 0;
   }
 
-  function generateGrid(width, height, cellSize, jitter, noiseX, noiseY) {
-    const margin = cellSize * 1.5;
-    const cols = Math.ceil((width + margin * 2) / cellSize);
-    const rows = Math.ceil((height + margin * 2) / cellSize);
+  // as many whole tiles as fit in `frame` (canvas coordinates), centered,
+  // leaving room for jitter and the border stroke so both stay inside it
+  function generateGrid(frame, cellSize, jitter, noiseX, noiseY) {
+    const inset = gridInset(cellSize, jitter);
+    const cols = Math.max(1, Math.floor((frame.w - inset * 2) / cellSize + 1e-6));
+    const rows = Math.max(1, Math.floor((frame.h - inset * 2) / cellSize + 1e-6));
+    const x0 = frame.x + (frame.w - cols * cellSize) / 2, y0 = frame.y + (frame.h - rows * cellSize) / 2;
     const points = [];
     for (let j = 0; j <= rows; j++) {
       const row = [];
       for (let i = 0; i <= cols; i++) {
         row.push({
-          x: -margin + i * cellSize + noiseX(i * 0.9, j * 0.9) * cellSize * jitter,
-          y: -margin + j * cellSize + noiseY(i * 0.9, j * 0.9) * cellSize * jitter,
+          x: x0 + i * cellSize + noiseX(i * 0.9, j * 0.9) * cellSize * jitter,
+          y: y0 + j * cellSize + noiseY(i * 0.9, j * 0.9) * cellSize * jitter,
         });
       }
       points.push(row);
     }
-    return { points, cols, rows };
+    return { points, cols, rows, x0, y0 };
   }
 
   const ground = document.getElementById('ground');
@@ -889,7 +892,25 @@
   let seed = Math.floor(Math.random() * 1e9);
 
   // must match the builder's zoom-out limit and pan margin
-  const MIN_ZOOM = 0.6, PAN_MARGIN = 160;
+  // the map is a fixed board of GRID_COLS x GRID_ROWS tiles in map space
+  // (1 unit = 1 css px at zoom 1); the builder zooms out just far enough to
+  // show all of it
+  const GRID_COLS = 80, GRID_ROWS = 80;
+  // must match the builder's zoom-in limit; the canvas keeps enough pixels
+  // to stay sharp there
+  const MAX_ZOOM = 1.8;
+  // stroke around the outermost tiles
+  const BORDER_COLOR = '#C5C39E', BORDER_WIDTH = 10;
+
+  // room kept around the grid for tile jitter and the border stroke
+  function gridInset(cellSize, jitter) { return cellSize * jitter + BORDER_WIDTH / 2; }
+
+  // map-space rect that holds the tile grid and its border; it follows the
+  // tile size and jitter settings
+  function mapFrame() {
+    const s = currentSettings(), inset = gridInset(s.cell, s.jitter);
+    return { x: 0, y: 0, w: GRID_COLS * s.cell + 2 * inset, h: GRID_ROWS * s.cell + 2 * inset };
+  }
   const MAX_PIXELS = 16e6;
   let ext = { x: 0, y: 0, w: 0, h: 0 }, dpr = 1;
   let view = { zoom: 1, panX: 0, panY: 0 };
@@ -945,8 +966,8 @@
   function bandAt(x, y) {
     if (!grid) return null;
     const cx = x - ext.x, cy = y - ext.y;
-    const i0 = Math.floor((cx + grid.margin) / grid.cell);
-    const j0 = Math.floor((cy + grid.margin) / grid.cell);
+    const i0 = Math.floor((cx - grid.x0) / grid.cell);
+    const j0 = Math.floor((cy - grid.y0) / grid.cell);
     // jitter can push a point into a neighboring cell's quad
     for (let dj = -1; dj <= 1; dj++) {
       for (let di = -1; di <= 1; di++) {
@@ -965,16 +986,15 @@
 
   function measure() {
     const w = window.innerWidth, h = window.innerHeight;
-    const ex = Math.ceil(w / (2 * MIN_ZOOM) - w / 2 + PAN_MARGIN);
-    const ey = Math.ceil(h / (2 * MIN_ZOOM) - h / 2 + PAN_MARGIN);
-    ext = { x: -ex, y: -ey, w: w + 2 * ex, h: h + 2 * ey };
-    dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_PIXELS / (ext.w * ext.h)));
+    // the canvas covers just the map; the page shows around it
+    ext = mapFrame();
+    dpr = Math.min((window.devicePixelRatio || 1) * MAX_ZOOM, Math.sqrt(MAX_PIXELS / (ext.w * ext.h)));
     groundLayers.forEach((el) => {
       el.style.left = ext.x + 'px';
       el.style.top = ext.y + 'px';
       el.style.width = ext.w + 'px';
       el.style.height = ext.h + 'px';
-      el.style.transformOrigin = (ex + w / 2) + 'px ' + (ey + h / 2) + 'px';
+      el.style.transformOrigin = (w / 2 - ext.x) + 'px ' + (h / 2 - ext.y) + 'px';
     });
     applyView();
   }
@@ -986,7 +1006,13 @@
     groundLayers.forEach((el) => { el.style.transform = t; });
   }
 
+  function canvasFrame() {
+    const f = mapFrame();
+    return { x: f.x - ext.x, y: f.y - ext.y, w: f.w, h: f.h };
+  }
+
   function draw() {
+    measure(); // tile size and jitter change the map's size
     const w = ext.w, h = ext.h;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
@@ -1000,7 +1026,7 @@
     const perlinJY = makePerlin2D(seed + 202);
     const ridged = makeRidgedMF(perlinTerrain, { octaves: s.oct, lacunarity: s.lac, gain: s.gain });
 
-    const { points, cols, rows } = generateGrid(w, h, s.cell, s.jitter, perlinJX, perlinJY);
+    const { points, cols, rows, x0, y0 } = generateGrid(canvasFrame(), s.cell, s.jitter, perlinJX, perlinJY);
     const path = terrainType === 'valley' ? makeValleyPath(cols, rows, seed) : null;
 
     // sample every cell's band index once, at its unjittered center
@@ -1013,11 +1039,28 @@
       }
       levels.push(row);
     }
-    grid = { points, levels, cols, rows, bands, cell: s.cell, margin: s.cell * 1.5, seed };
+    grid = { points, levels, cols, rows, bands, cell: s.cell, x0, y0, seed };
+    // clouds stay inside the grid's edge
+    const gx1 = w - (x0 + cols * s.cell), gy1 = h - (y0 + rows * s.cell);
+    document.getElementById('clouds').style.clipPath = 'inset(' + y0 + 'px ' + gx1 + 'px ' + gy1 + 'px ' + x0 + 'px)';
+
+    // outline of the whole grid, clockwise along its outermost cell edges
+    const outline = points[0].slice();
+    for (let j = 1; j <= rows; j++) outline.push(points[j][cols]);
+    for (let i = cols - 1; i >= 0; i--) outline.push(points[rows][i]);
+    for (let j = rows - 1; j > 0; j--) outline.push(points[j][0]);
+    const tracePath = (pts) => {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let k = 1; k < pts.length; k++) ctx.lineTo(pts[k].x, pts[k].y);
+      ctx.closePath();
+    };
 
     // the base layer is all water; each higher band is stacked on top of it
+    ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = bands[0].color;
-    ctx.fillRect(0, 0, w, h);
+    tracePath(outline);
+    ctx.fill();
 
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
@@ -1056,6 +1099,12 @@
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+
+    ctx.strokeStyle = BORDER_COLOR;
+    ctx.lineWidth = BORDER_WIDTH;
+    ctx.lineJoin = 'round';
+    tracePath(outline);
+    ctx.stroke();
 
     terrainListeners.forEach((fn) => fn());
 
@@ -1124,9 +1173,16 @@
     sparseness: () => parseFloat(els.sparse.value),
     // called when the sparseness slider moves
     onObjectsChange(fn) { objectListeners.push(fn); },
-    // paint the on-screen map area (0,0)-(W,H) into another context, for PNG export
-    drawWorld(target, outW, outH) {
-      target.drawImage(canvas, -ext.x * dpr, -ext.y * dpr, window.innerWidth * dpr, window.innerHeight * dpr, 0, 0, outW, outH);
+    // map-space rect of the tile grid (without the border stroke)
+    bounds() {
+      if (!grid) return mapFrame();
+      return { x: grid.x0 + ext.x, y: grid.y0 + ext.y, w: grid.cols * grid.cell, h: grid.rows * grid.cell };
+    },
+    // map-space rect that holds the grid and its border, jitter included
+    frame: mapFrame,
+    // paint map-space rect r into another context, for PNG export
+    drawWorld(target, outW, outH, r) {
+      target.drawImage(canvas, (r.x - ext.x) * dpr, (r.y - ext.y) * dpr, r.w * dpr, r.h * dpr, 0, 0, outW, outH);
     },
   };
 
@@ -1140,8 +1196,8 @@
 <script>
 (function(){
   "use strict";
-  // the map's coordinate space is the viewport itself (1 unit = 1 css px at
-  // zoom 1), so it lines up with the terrain background drawn underneath
+  // map space is shared with the terrain (1 unit = 1 css px at zoom 1), so
+  // the builder lines up with the terrain drawn underneath
   var W = window.innerWidth, H = window.innerHeight;
   var svg = document.getElementById('map');
   var world = document.getElementById('world');
@@ -1155,10 +1211,19 @@
   var uid = 1;
 
   function randSeed(){ return Math.random()*1000; }
-  // starter layout, authored on a 1200x800 board and scaled to the viewport
+  // the tile grid's rect in map space; features stay inside it
+  function mapBounds(){
+    return window.MossTerrain ? window.MossTerrain.bounds() : { x:0, y:0, w:W, h:H };
+  }
+  function clampToMap(x, y){
+    var b = mapBounds();
+    return { x: Math.max(b.x+10, Math.min(b.x+b.w-10, x)), y: Math.max(b.y+10, Math.min(b.y+b.h-10, y)) };
+  }
+  // starter layout, authored on a 1200x800 board and scaled to the map
   function defaultFeatures(){
-    function sx(v){ return v * W / 1200; }
-    function sy(v){ return v * H / 800; }
+    var b = mapBounds();
+    function sx(v){ return b.x + v * b.w / 1200; }
+    function sy(v){ return b.y + v * b.h / 800; }
     return [
       { id: uid++, type:'mountain', x:sx(260), y:sy(150), seed: randSeed() },
       { id: uid++, type:'pond',     x:sx(420), y:sy(290), r:60, seed: randSeed() },
@@ -1169,6 +1234,10 @@
     ];
   }
 
+  // MAX_ZOOM must match the terrain's. The zoom-out limit is whatever fits
+  // the whole map on screen, clear of the top buttons and bottom toolbar
+  // (MAP_PAD, screen px); the map opens, and resets to, that view.
+  var MAX_ZOOM = 1.8, BUTTON_STEP = 1.2, MAP_PAD = { top: 76, right: 24, bottom: 96, left: 24 };
   var state = { features: defaultFeatures(), history: [], mode: null, zoom: 1, panX: 0, panY: 0, pathSeeds: {} };
 
   function snapshot(){ return JSON.parse(JSON.stringify({ features: state.features, pathSeeds: state.pathSeeds })); }
@@ -1420,8 +1489,8 @@
       var r = (pond.r||55) + 20;
       if (d < r){
         var ux = d>0.1 ? dx/d : 1, uy = d>0.1 ? dy/d : 0;
-        f.x = Math.max(10, Math.min(W-10, pond.x + ux*r));
-        f.y = Math.max(10, Math.min(H-10, pond.y + uy*r));
+        var c = clampToMap(pond.x + ux*r, pond.y + uy*r);
+        f.x = c.x; f.y = c.y;
       }
     });
   }
@@ -1679,6 +1748,14 @@
     // together anywhere along their length, then re-check pond clearance
     separateAllPaths(placedRoadPts, 30, 3);
     placedRoadPts.forEach(function(p){ nudgeOutOfPonds(p, ponds, 18); });
+
+    // bends can swing past the map's edge; keep every road, spur and river
+    // on the map (points are shared with the sample lists, so edit in place)
+    [roadCurves, spurCurves, riverCurves].forEach(function(list){
+      list.forEach(function(c){
+        c.pts.forEach(function(pt){ var q = clampToMap(pt.x, pt.y); pt.x = q.x; pt.y = q.y; });
+      });
+    });
 
     // enclosed loops (redundant roads create a cycle around a town cluster) —
     // trace the loop's actual road curves and clear the forest inside it
@@ -2002,10 +2079,11 @@
         el.setPointerCapture(e.pointerId);
 
         function onMove(ev){
+          if (state.gesturing) return; // a second finger turned this into a pinch
           var p = toSvgPoint(ev);
           var nx = p.x - offX, ny = p.y - offY;
-          nx = Math.max(10, Math.min(W-10, nx));
-          ny = Math.max(10, Math.min(H-10, ny));
+          var c = clampToMap(nx, ny);
+          nx = c.x; ny = c.y;
           if (!isPond){
             var safe = keepOutOfPonds({x:nx,y:ny}, 4);
             nx = safe.x; ny = safe.y;
@@ -2068,6 +2146,10 @@
       return;
     }
 
+    // nothing gets placed off the map
+    var b = mapBounds();
+    if (loc.x < b.x || loc.y < b.y || loc.x > b.x+b.w || loc.y > b.y+b.h) return;
+
     pushHistory();
     var placeLoc = (state.mode === 'pond') ? loc : keepOutOfPonds(loc, 4);
     var nf = { id: uid++, type: state.mode, x: placeLoc.x, y: placeLoc.y, seed: randSeed() };
@@ -2080,33 +2162,79 @@
   document.getElementById('undoBtn').addEventListener('click', undo);
 
   /* ---------------- zoom + pan ---------------- */
-  function clampPan(){
-    var vbW=W/state.zoom, vbH=H/state.zoom;
-    var margin = 160;
-    var maxPanX = Math.max(0, (W-vbW)/2) + margin, maxPanY = Math.max(0, (H-vbH)/2) + margin;
-    state.panX = Math.max(-maxPanX, Math.min(maxPanX, state.panX));
-    state.panY = Math.max(-maxPanY, Math.min(maxPanY, state.panY));
+  function mapFrame(){
+    return window.MossTerrain ? window.MossTerrain.frame() : { x:0, y:0, w:W, h:H };
   }
+  function minZoom(){
+    var f = mapFrame();
+    var z = Math.min((W - MAP_PAD.left - MAP_PAD.right) / f.w, (H - MAP_PAD.top - MAP_PAD.bottom) / f.h);
+    return Math.min(MAX_ZOOM, Math.max(0.05, z));
+  }
+  // pan (map units) that puts map coordinate m at screen coordinate s
+  function panFor(m, s, size){ return (s - size/2)/state.zoom + size/2 - m; }
+  // on each axis, a map that fits between the paddings is centered there;
+  // a bigger one can pan until its edge reaches the padding
+  function clampAxis(pan, start, len, size, padA, padB){
+    var lo = panFor(start + len, size - padB, size), hi = panFor(start, padA, size);
+    if (lo >= hi) return panFor(start + len/2, (padA + size - padB)/2, size);
+    return Math.max(lo, Math.min(hi, pan));
+  }
+  function clampPan(){
+    var f = mapFrame();
+    state.panX = clampAxis(state.panX, f.x, f.w, W, MAP_PAD.left, MAP_PAD.right);
+    state.panY = clampAxis(state.panY, f.y, f.h, H, MAP_PAD.top, MAP_PAD.bottom);
+  }
+  function resetView(){ state.zoom = minZoom(); applyZoom(); }
   function applyZoom(){
+    state.zoom = Math.max(minZoom(), Math.min(MAX_ZOOM, state.zoom));
     clampPan();
     var vbW=W/state.zoom, vbH=H/state.zoom;
     var vbX=(W-vbW)/2 - state.panX, vbY=(H-vbH)/2 - state.panY;
     svg.setAttribute('viewBox', vbX+' '+vbY+' '+vbW+' '+vbH);
     if (window.MossTerrain) window.MossTerrain.setView(state.zoom, state.panX, state.panY);
   }
-  document.getElementById('zoomIn').addEventListener('click', function(){ state.zoom=Math.min(1.8,+(state.zoom+0.15).toFixed(2)); applyZoom(); });
-  document.getElementById('zoomOut').addEventListener('click', function(){ state.zoom=Math.max(0.6,+(state.zoom-0.15).toFixed(2)); applyZoom(); });
-  document.getElementById('centerBtn').addEventListener('click', function(){ state.zoom=1; state.panX=0; state.panY=0; applyZoom(); });
+  // zoom to `z`, keeping the map point under screen point (sx, sy) in place
+  function zoomAt(z, sx, sy){
+    z = Math.max(minZoom(), Math.min(MAX_ZOOM, z));
+    var mx = (sx - W/2)/state.zoom + W/2 - state.panX;
+    var my = (sy - H/2)/state.zoom + H/2 - state.panY;
+    state.zoom = z;
+    state.panX = (sx - W/2)/z + W/2 - mx;
+    state.panY = (sy - H/2)/z + H/2 - my;
+    applyZoom();
+  }
+  document.getElementById('zoomIn').addEventListener('click', function(){ zoomAt(state.zoom*BUTTON_STEP, W/2, H/2); });
+  document.getElementById('zoomOut').addEventListener('click', function(){ zoomAt(state.zoom/BUTTON_STEP, W/2, H/2); });
+  document.getElementById('centerBtn').addEventListener('click', resetView);
 
-  // right-click drag pans the map; right-click alone is otherwise unused here
-  // so it's free for panning instead of the browser's context menu
-  svg.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  // scrolling zooms at the cursor. A trackpad pinch (and ctrl + wheel) sends
+  // small deltas with ctrlKey set, so it gets a stronger response.
+  svg.addEventListener('wheel', function(e){
+    e.preventDefault(); // keep the browser from zooming or scrolling the page
+    var dy = e.deltaMode === 1 ? e.deltaY*16 : e.deltaMode === 2 ? e.deltaY*H : e.deltaY;
+    var rate = e.ctrlKey ? 0.01 : 0.002;
+    zoomAt(state.zoom*Math.exp(-Math.max(-100, Math.min(100, dy))*rate), e.clientX, e.clientY);
+  }, { passive:false });
+  // Safari reports trackpad pinches as gesture events rather than ctrl + wheel
   (function(){
-    var panning = false, startClient = null, startPan = null;
+    var startZoom = 1;
+    svg.addEventListener('gesturestart', function(e){ e.preventDefault(); startZoom = state.zoom; });
+    svg.addEventListener('gesturechange', function(e){ e.preventDefault(); zoomAt(startZoom*e.scale, e.clientX, e.clientY); });
+    svg.addEventListener('gestureend', function(e){ e.preventDefault(); });
+  })();
+
+  // right- or middle-click drag pans the map; right-click alone is otherwise
+  // unused here so it's free for panning instead of the browser's context menu
+  svg.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  // stop the middle button's autoscroll
+  svg.addEventListener('mousedown', function(e){ if (e.button === 1) e.preventDefault(); });
+  (function(){
+    var panning = false, panButton = null, startClient = null, startPan = null;
     svg.addEventListener('pointerdown', function(e){
-      if (e.button !== 2) return;
+      if (e.pointerType === 'touch' || (e.button !== 2 && e.button !== 1)) return;
       e.preventDefault();
       panning = true;
+      panButton = e.button;
       startClient = { x:e.clientX, y:e.clientY };
       startPan = { x: state.panX, y: state.panY };
       svg.setPointerCapture(e.pointerId);
@@ -2114,20 +2242,64 @@
     });
     svg.addEventListener('pointermove', function(e){
       if (!panning) return;
-      var ctm = svg.getScreenCTM();
-      var scale = (ctm && ctm.a) ? ctm.a : 1; // screen px per svg unit
-      state.panX = startPan.x + (e.clientX - startClient.x) / scale;
-      state.panY = startPan.y + (e.clientY - startClient.y) / scale;
+      state.panX = startPan.x + (e.clientX - startClient.x) / state.zoom;
+      state.panY = startPan.y + (e.clientY - startClient.y) / state.zoom;
       applyZoom();
     });
     function stopPanning(e){
       if (!panning) return;
-      if (e.button !== undefined && e.button !== 2) return;
+      if (e.type === 'pointerup' && e.button !== panButton) return;
       panning = false;
       svg.style.cursor = '';
     }
     svg.addEventListener('pointerup', stopPanning);
     svg.addEventListener('pointercancel', stopPanning);
+  })();
+
+  // two fingers pinch to zoom and drag to pan. Listeners run in the capture
+  // phase so a finger that lands on a town or pond still counts.
+  (function(){
+    var touches = new Map(), pinch = null;
+    function mid(){
+      var pts = Array.from(touches.values());
+      return { x:(pts[0].x+pts[1].x)/2, y:(pts[0].y+pts[1].y)/2, d:Math.hypot(pts[0].x-pts[1].x, pts[0].y-pts[1].y) || 1 };
+    }
+    svg.addEventListener('pointerdown', function(e){
+      if (e.pointerType !== 'touch') return;
+      touches.set(e.pointerId, { x:e.clientX, y:e.clientY });
+      if (touches.size === 2){
+        var m = mid();
+        pinch = { x:m.x, y:m.y, d:m.d, zoom:state.zoom };
+        state.gesturing = true;
+      }
+    }, true);
+    svg.addEventListener('pointermove', function(e){
+      if (!touches.has(e.pointerId)) return;
+      touches.set(e.pointerId, { x:e.clientX, y:e.clientY });
+      if (!pinch || touches.size !== 2) return;
+      var m = mid();
+      // pan by the midpoint's movement, then zoom around where it is now
+      state.panX += (m.x - pinch.x)/state.zoom;
+      state.panY += (m.y - pinch.y)/state.zoom;
+      pinch.x = m.x; pinch.y = m.y;
+      zoomAt(pinch.zoom*m.d/pinch.d, m.x, m.y);
+    }, true);
+    function lift(e){
+      if (!touches.delete(e.pointerId)) return;
+      if (touches.size < 2) pinch = null;
+      // the last finger up ends the gesture; swallow the click it produces
+      // so a pinch never places a feature
+      if (touches.size === 0 && state.gesturing){
+        state.gesturing = false;
+        gestureEnded = Date.now();
+      }
+    }
+    var gestureEnded = 0;
+    svg.addEventListener('click', function(ce){
+      if (Date.now() - gestureEnded < 400) ce.stopPropagation();
+    }, true);
+    svg.addEventListener('pointerup', lift, true);
+    svg.addEventListener('pointercancel', lift, true);
   })();
 
   /* ---------------- day/night toggle ---------------- */
@@ -2202,21 +2374,23 @@
   }
 
   document.getElementById('downloadBtn').addEventListener('click', function(){
+    // export just the bordered map
+    var r = mapFrame();
     var prevVB = svg.getAttribute('viewBox');
-    svg.setAttribute('viewBox', '0 0 '+W+' '+H);
+    svg.setAttribute('viewBox', r.x+' '+r.y+' '+r.w+' '+r.h);
     var svgStr = new XMLSerializer().serializeToString(svg);
     svg.setAttribute('viewBox', prevVB);
     // give the serialized copy explicit pixel dimensions so it rasterizes at the map's size
-    svgStr = svgStr.replace('<svg ', '<svg width="'+W+'" height="'+H+'" ');
+    svgStr = svgStr.replace('<svg ', '<svg width="'+r.w+'" height="'+r.h+'" ');
     var blob = new Blob([svgStr], { type:'image/svg+xml;charset=utf-8' });
     var url = URL.createObjectURL(blob);
     var img = new Image();
     img.onload = function(){
       var scale = 2;
       var canvas = document.createElement('canvas');
-      canvas.width = W*scale; canvas.height = H*scale;
+      canvas.width = Math.round(r.w*scale); canvas.height = Math.round(r.h*scale);
       var ctx = canvas.getContext('2d');
-      if (window.MossTerrain) window.MossTerrain.drawWorld(ctx, canvas.width, canvas.height);
+      if (window.MossTerrain) window.MossTerrain.drawWorld(ctx, canvas.width, canvas.height, r);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
       canvas.toBlob(function(pngBlob){ if (pngBlob) savePng(pngBlob); }, 'image/png');
@@ -2282,6 +2456,7 @@
     if (!T) return;
     var ext = T.extent(), seed = T.seed() | 0, density = 1 - T.sparseness();
     var landUnder = function(x, y){ return !!GROUND_OBJECTS[T.bandAt(x, y)]; };
+    var mb = T.bounds();
 
     Object.keys(GROUND_OBJECTS).forEach(function(band, bi){
       var set = GROUND_OBJECTS[band], sp = set.spacing;
@@ -2299,6 +2474,8 @@
           // so nothing stands in water or snow
           var half = o.w * 0.4;
           if (!landUnder(x - half, y) || !landUnder(x + half, y) || !landUnder(x, y - o.h / 2)) continue;
+          // and the whole sprite stays inside the map's border
+          if (x - o.w / 2 < mb.x || x + o.w / 2 > mb.x + mb.w || y - o.h < mb.y || y > mb.y + mb.h) continue;
           forestSpots.push({ use:'obj-'+o.id, x:x, y:y, base:y,
                              cx:x, cy:y - o.h / 2, pad:Math.min(MAX_PAD, o.w / 2) });
         }
@@ -2405,8 +2582,7 @@
   }
 
   /* ---------------- sizing ---------------- */
-  // masks and the forest cover the terrain's full extent (bigger than the
-  // viewport so zooming out or panning never shows a bare edge)
+  // masks and the forest cover the terrain's full extent (the whole map)
   function syncSize(){
     W = window.innerWidth; H = window.innerHeight;
     var ext = window.MossTerrain ? window.MossTerrain.extent() : { x:0, y:0, w:W, h:H };
@@ -2418,7 +2594,8 @@
   }
   if (window.MossTerrain){
     // bridges follow the water, so new terrain needs a full render
-    window.MossTerrain.onTerrainChange(function(){ computeForestSpots(); render(); });
+    // new terrain can also resize the map (tile size), so refit the view
+    window.MossTerrain.onTerrainChange(function(){ syncSize(); applyZoom(); computeForestSpots(); render(); });
     window.MossTerrain.onObjectsChange(function(){ computeForestSpots(); drawForest(); });
   }
   var resizeRaf = null;
@@ -2430,7 +2607,7 @@
   /* ---------------- boot ---------------- */
   syncSize();
   computeForestSpots();
-  applyZoom();
+  resetView();
   updateUndoBtn();
   render();
 })();
