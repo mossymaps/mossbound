@@ -865,9 +865,9 @@
   // as many whole tiles as fit in `frame` (canvas coordinates), centered,
   // leaving room for jitter and the border stroke so both stay inside it
   function generateGrid(frame, cellSize, jitter, noiseX, noiseY) {
-    const inset = cellSize * jitter + BORDER_WIDTH / 2;
-    const cols = Math.max(1, Math.floor((frame.w - inset * 2) / cellSize));
-    const rows = Math.max(1, Math.floor((frame.h - inset * 2) / cellSize));
+    const inset = gridInset(cellSize, jitter);
+    const cols = Math.max(1, Math.floor((frame.w - inset * 2) / cellSize + 1e-6));
+    const rows = Math.max(1, Math.floor((frame.h - inset * 2) / cellSize + 1e-6));
     const x0 = frame.x + (frame.w - cols * cellSize) / 2, y0 = frame.y + (frame.h - rows * cellSize) / 2;
     const points = [];
     for (let j = 0; j <= rows; j++) {
@@ -892,18 +892,24 @@
   let seed = Math.floor(Math.random() * 1e9);
 
   // must match the builder's zoom-out limit and pan margin
-  // the map is a fixed 3:2 landscape board in map space (1 unit = 1 css px
-  // at zoom 1); the builder zooms out just far enough to show all of it
-  const MAP_W = 1500, MAP_H = 1000;
+  // the map is a fixed board of GRID_COLS x GRID_ROWS tiles in map space
+  // (1 unit = 1 css px at zoom 1); the builder zooms out just far enough to
+  // show all of it
+  const GRID_COLS = 80, GRID_ROWS = 80;
   // must match the builder's zoom-in limit; the canvas keeps enough pixels
   // to stay sharp there
   const MAX_ZOOM = 1.8;
   // stroke around the outermost tiles
   const BORDER_COLOR = '#C5C39E', BORDER_WIDTH = 10;
 
-  // map-space rect that holds the tile grid and its border
+  // room kept around the grid for tile jitter and the border stroke
+  function gridInset(cellSize, jitter) { return cellSize * jitter + BORDER_WIDTH / 2; }
+
+  // map-space rect that holds the tile grid and its border; it follows the
+  // tile size and jitter settings
   function mapFrame() {
-    return { x: 0, y: 0, w: MAP_W, h: MAP_H };
+    const s = currentSettings(), inset = gridInset(s.cell, s.jitter);
+    return { x: 0, y: 0, w: GRID_COLS * s.cell + 2 * inset, h: GRID_ROWS * s.cell + 2 * inset };
   }
   const MAX_PIXELS = 16e6;
   let ext = { x: 0, y: 0, w: 0, h: 0 }, dpr = 1;
@@ -1006,6 +1012,7 @@
   }
 
   function draw() {
+    measure(); // tile size and jitter change the map's size
     const w = ext.w, h = ext.h;
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
@@ -2587,7 +2594,8 @@
   }
   if (window.MossTerrain){
     // bridges follow the water, so new terrain needs a full render
-    window.MossTerrain.onTerrainChange(function(){ computeForestSpots(); render(); });
+    // new terrain can also resize the map (tile size), so refit the view
+    window.MossTerrain.onTerrainChange(function(){ syncSize(); applyZoom(); computeForestSpots(); render(); });
     window.MossTerrain.onObjectsChange(function(){ computeForestSpots(); drawForest(); });
   }
   var resizeRaf = null;
