@@ -163,7 +163,6 @@ footer .inner{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap
       </div>
       <div class="side">
         <p>Vibepod puts all your hotkeys and a built-in microphone in one device. It's made for working professionals and students to vibe-code their projects and get tasks done with any major AI agent.</p>
-        <a class="btn" href="#build">Build yours</a>
         <div class="cue"><i></i>Scroll to explore</div>
       </div>
     </div>
@@ -174,7 +173,7 @@ footer .inner{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap
     <div class="inner">
       <div class="copy">
         <p class="eyebrow">Three mechanical keys</p>
-        <h2>Real switches, any action.</h2>
+        <h2>Real keys, any action.</h2>
         <p>Each key can type a letter, fire a shortcut, run a macro of several steps, or control your media. Full-travel mechanical switches give every press a clear click.</p>
       </div>
     </div>
@@ -290,7 +289,8 @@ function loadMesh(){
     for(let j=0;j<3;j++){ N[a+j*3]=nx; N[a+j*3+1]=ny; N[a+j*3+2]=nz; G[t*3+j]=grpTri[t]; }
   }
   // the wheel (group 3) is a disc centered at (-12,-12,3.5) that turns about z
-  return {P,N,G,n, keysY:(8.5-ctr[1])*s, wheelY:(-12-ctr[1])*s, wheelC:[(-12-ctr[0])*s,(-12-ctr[1])*s,(3.5-ctr[2])*s]};
+  // the three keys sit side by side along y (centers at 18.5, 8.5 and -1.5); each travels down along z
+  return {P,N,G,n, s, keyY:y=>y/s+ctr[1], keysY:(8.5-ctr[1])*s, wheelY:(-12-ctr[1])*s, wheelC:[(-12-ctr[0])*s,(-12-ctr[1])*s,(3.5-ctr[2])*s]};
 }
 
 /* ---------- matrices (column-major) ---------- */
@@ -345,14 +345,19 @@ function start(){
   const mkBuf=d=>{const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,d,gl.STATIC_DRAW);return b;};
   const geo=(P,N,G)=>({p:mkBuf(P),n:mkBuf(N),g:mkBuf(G||new Float32Array(P.length/3)),count:P.length/3});
   const bindGeo=o=>{[["p",3],["n",3],["g",1]].forEach(([k,s])=>{gl.bindBuffer(gl.ARRAY_BUFFER,o[k]);gl.enableVertexAttribArray(loc[k]);gl.vertexAttribPointer(loc[k],s,gl.FLOAT,false,0,0);});};
-  // split the wheel out so it can turn on its own axle
-  function part(keep){
+  // split the wheel and each key out so they can move on their own
+  const pieceOf=i=>{
+    const g=mesh.G[i]; if(g===3) return "wheel"; if(g===0) return "body";
+    const y=mesh.keyY((mesh.P[i*3+1]+mesh.P[i*3+4]+mesh.P[i*3+7])/3);
+    return y>13.5?"key0":y>3.5?"key1":"key2";
+  };
+  function part(name){
     const P=[],N=[],G=[];
-    for(let i=0;i<mesh.n;i+=3){ if((mesh.G[i]===3)!==keep) continue;
+    for(let i=0;i<mesh.n;i+=3){ if(pieceOf(i)!==name) continue;
       for(let j=i;j<i+3;j++){ P.push(mesh.P[j*3],mesh.P[j*3+1],mesh.P[j*3+2]); N.push(mesh.N[j*3],mesh.N[j*3+1],mesh.N[j*3+2]); G.push(mesh.G[j]); } }
     return geo(new Float32Array(P),new Float32Array(N),new Float32Array(G));
   }
-  const devGeo=part(false), wheelGeo=part(true);
+  const devGeo=part("body"), wheelGeo=part("wheel"), keyGeos=[part("key2"),part("key1"),part("key0")];
   const WC=mesh.wheelC, wheelPivot=a=>M4.mul(M4.T(WC[0],WC[1],WC[2]),M4.mul(M4.Z(a),M4.T(-WC[0],-WC[1],-WC[2])));
   const U=n=>gl.getUniformLocation(pr,n), uM=U("M"),uVP=U("VP"),uB=U("cB"),uS=U("cS"),uT=U("cT"),uH=U("cH"),uSolid=U("solid"),uCam=U("cam"),uRim=U("rimC");
 
@@ -416,6 +421,26 @@ function start(){
     if(t>=1){ wheelStart=-1; return 0; }
     return -TAU*ease(t);
   }
+  /* the keys click one after another, round after round, while their section is in view */
+  const keysSec=document.querySelector('[data-pose="keys"]');
+  const TRAVEL=1.6*mesh.s, ROUND=2600, STAGGER=320, PRESS=340;   // 1.6mm of the 2mm the keys stand proud
+  let keysStart=-1;
+  function keyDepths(now){
+    const r=keysSec.getBoundingClientRect(), mid=r.top+r.height/2, vh=innerHeight;
+    const inView=mid>vh*0.1 && mid<vh*0.9;
+    if(inView && keysStart<0 && !reduce) keysStart=now+250;
+    if(keysStart<0) return [0,0,0];
+    const e=now-keysStart, inRound=e%ROUND;
+    // finish the round that's playing, then rest once the section leaves
+    if(!inView && e>=0 && inRound>=STAGGER*2+PRESS){ keysStart=-1; return [0,0,0]; }
+    return [0,1,2].map(i=>{
+      const t=(e<0?-1:inRound-i*STAGGER)/PRESS;
+      if(t<0||t>=1) return 0;
+      // snap down in the first quarter, a short bottom-out, then spring back up
+      const d=t<.25?t/.25 : t<.4?1 : 1-(t-.4)/.6;
+      return TRAVEL*(d<1?1-Math.pow(1-d,2):1);
+    });
+  }
   const halo=document.getElementById("halo");
   let cur=null, last=performance.now();
   const rimDark=matchMedia("(prefers-color-scheme: dark)");
@@ -443,6 +468,7 @@ function start(){
     const dark=document.documentElement.dataset.theme==="dark" || (rimDark.matches && document.documentElement.dataset.theme!=="light");
     gl.uniform3fv(uRim, dark?[.42,.3,.62]:[.55,.5,.66]);
     gl.uniform1f(uSolid,0); bindGeo(devGeo); gl.drawArrays(gl.TRIANGLES,0,devGeo.count);
+    keyDepths(now).forEach((d,i)=>{ gl.uniformMatrix4fv(uM,false,M4.mul(M,M4.T(0,0,-d))); bindGeo(keyGeos[i]); gl.drawArrays(gl.TRIANGLES,0,keyGeos[i].count); });
     gl.uniformMatrix4fv(uM,false,M4.mul(M,wheelPivot(wheelAngle(now)))); bindGeo(wheelGeo); gl.drawArrays(gl.TRIANGLES,0,wheelGeo.count);
 
     halo.style.setProperty("--hx",(50+cur.x*50)+"%"); halo.style.setProperty("--hy",(50-cur.y*50)+"%");
