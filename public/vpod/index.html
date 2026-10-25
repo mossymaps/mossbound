@@ -44,7 +44,6 @@ a{color:inherit}
 .nav .inner{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:18px}
 .brand{display:flex;align-items:center;gap:12px;text-decoration:none}
 .brand b{font-family:var(--f-display);font-stretch:125%;font-weight:800;font-size:20px;letter-spacing:-.01em}
-.tag{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 9px}
 .btn{display:inline-flex;align-items:center;gap:8px;font:600 15px/1 var(--f-body);text-decoration:none;background:var(--accent);color:var(--accent-ink);border:0;border-radius:999px;padding:13px 20px;cursor:pointer;transition:transform .2s ease, filter .2s ease}
 @media (hover:hover){.btn:hover{transform:translateY(-1px);filter:brightness(1.06)}}
 .btn:active{filter:brightness(.94)}
@@ -140,7 +139,6 @@ footer .inner{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap
 
 @media (max-width:760px){
   body{font-size:16px}
-  .nav .tag{display:none}
   .nav .inner{padding-block:12px}
   .nav .btn{font-size:14px;padding:11px 16px}
   /* svh: the smallest viewport, so content isn't hidden under a phone's address bar */
@@ -189,7 +187,7 @@ footer .inner{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap
 
 <header class="nav wrap">
   <div class="inner">
-    <a class="brand" href="#top"><b>vibepod</b><span class="tag">Concept v1</span></a>
+    <a class="brand" href="#top"><b>vibepod</b></a>
     <a class="btn" href="#waitlist">Join the waitlist</a>
   </div>
 </header>
@@ -198,7 +196,7 @@ footer .inner{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap
   <section class="hero wrap" data-pose="hero">
     <div class="ghostword" aria-hidden="true">VIBEPOD</div>
     <div class="inner">
-      <h1>Create with AI on the go.</h1>
+      <h1>Unlock your potential with AI on the go.</h1>
       <div class="side">
         <p>Vibepod puts all your hotkeys and a built-in microphone in one device. It's made for working professionals and students to vibe-code their projects and get tasks done with any major AI agent.</p>
         <div class="cue"><i></i>Scroll to explore</div>
@@ -220,7 +218,7 @@ footer .inner{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap
     <div class="inner">
       <div class="copy">
         <p class="eyebrow">Side scroll wheel</p>
-        <h2>Turn it for anything with a range.</h2>
+        <h2>Turn it up or down.</h2>
         <p>Volume, zoom, brush size, timeline scrubbing. The wheel sits under your thumb on the side, so your fingers stay on the keys.</p>
       </div>
     </div>
@@ -259,7 +257,7 @@ footer .inner{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap
   </section>
 </main>
 
-<footer class="wrap"><div class="inner"><span>vibepod · Concept v1 · 2026</span><span>Design, specs and colors may change before production.</span></div></footer>
+<footer class="wrap"><div class="inner"><span>vibepod · 2026</span></div></footer>
 <p class="nogl" id="nogl" hidden>The 3D preview needs WebGL, which this browser has turned off.</p>
 
 <script>
@@ -344,7 +342,7 @@ const M4={
    s: scale · f: which part to center ("keys", "wheel" or none) */
 const TAU=Math.PI*2;
 const POSES={
-  hero:  {x:0,    y:0.18, roll:0,    spin:-1.12+Math.PI, tilt:-0.9, turn:0, s:0.86, f:0},
+  hero:  {x:0,    y:0.18, roll:0,    spin:-0.5+Math.PI,  tilt:-0.9, turn:0, s:0.86, f:0},
   keys:  {x:0.52, y:0,    roll:0,    spin:-1.42, tilt:-0.62, turn:-0.1, s:1.3,  f:"keys"},
   wheel: {x:-0.4, y:0,    roll:1.2,  spin:1.57,  tilt:-0.32, turn:-0.15,s:1.6,  f:"wheel"},
   config:{x:-0.3, y:0,    roll:0,    spin:-1.0+Math.PI+TAU, tilt:-0.85, turn:0, s:1.12, f:0},
@@ -426,6 +424,16 @@ function start(){
         const [mn,mx]=extentX(p); p.x+=(leftLimit+rightLimit)/2-(mn+mx)/2;
         fitX(p, leftLimit);
       }
+    } else if(name==="hero"){
+      // centre the model in the band between the nav and the headline, shrinking only if it won't fit
+      const top=1-(document.querySelector(".nav").getBoundingClientRect().bottom+24)/H*2;
+      const bottom=1-(document.querySelector(".hero h1").getBoundingClientRect().top+scrollY-24)/H*2;
+      centreY(p, bottom, top);
+      fitX(p, -Infinity);
+    } else if(name==="keys"){
+      // centre the model in the space between the copy and the nav's call to action, shrinking only if it won't fit
+      const left=(document.querySelector('[data-pose="keys"] .copy').getBoundingClientRect().right+48)/W*2-1;
+      centreX(p, left, rightLimit);
     } else {
       // keep the model's right edge inside the nav's call to action
       fitX(p, -Infinity);
@@ -442,11 +450,28 @@ function start(){
       p.s*=f;
     }
   }
-  function extentX(p){
+  /* centre the pose's projected x extent in [left, right], shrinking it (never growing) to fit; scaling pivots on
+     the focus point rather than the outline's middle, so re-centre on every pass */
+  function centreX(p, left, right){
+    for(let k=0;k<4;k++){
+      const [mn,mx]=extentX(p);
+      p.x+=(left+right)/2-(mn+mx)/2;
+      const f=(right-left)/(mx-mn); if(f<1) p.s*=f; else if(k) break;
+    }
+  }
+  /* the same in y, between NDC bottom and top (the bob adds a little slack) */
+  function centreY(p, bottom, top){
+    for(let k=0;k<4;k++){
+      const [mn,mx]=extentX(p,1);
+      p.y+=(bottom+top)/2-(mn+mx)/2;
+      const f=(top-bottom)/(mx-mn)*0.97; if(f<1) p.s*=f; else if(k) break;
+    }
+  }
+  function extentX(p, axis=0){
     const m=M4.mul(VP,modelMatrix(p,0,0)); let mn=1e9, mx=-1e9;
     for(let i=0;i<mesh.n;i++){
       const x=mesh.P[i*3],y=mesh.P[i*3+1],z=mesh.P[i*3+2];
-      const cx=m[0]*x+m[4]*y+m[8]*z+m[12], cw=m[3]*x+m[7]*y+m[11]*z+m[15], v=cx/cw;
+      const cx=m[axis]*x+m[4+axis]*y+m[8+axis]*z+m[12+axis], cw=m[3]*x+m[7]*y+m[11]*z+m[15], v=cx/cw;
       if(v<mn) mn=v; if(v>mx) mx=v;
     }
     return [mn,mx];
