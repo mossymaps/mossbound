@@ -124,8 +124,6 @@ legend output{color:var(--ink);margin-left:auto;letter-spacing:.04em;text-transf
 .swatches input:checked + label::after{border-color:var(--ink)}
 .swatches input:focus-visible + label::after{border-color:var(--accent)}
 .swatches label.split{background:linear-gradient(135deg,var(--c) 0 50%,var(--c2) 50% 100%)}
-.build{margin-top:24px;padding-top:18px;border-top:1px solid var(--line);font-family:var(--f-mono);font-size:13px;color:var(--muted)}
-.build b{color:var(--ink);font-weight:500}
 
 /* waitlist */
 .waitlist{min-height:110vh;display:grid;align-items:end}
@@ -209,7 +207,6 @@ footer .inner{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap
   </section>
 
   <section class="feature wrap" data-pose="keys">
-    <div class="ghostword" aria-hidden="true">PRESS</div>
     <div class="inner">
       <div class="copy">
         <p class="eyebrow">Three mechanical keys</p>
@@ -220,7 +217,6 @@ footer .inner{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap
   </section>
 
   <section class="feature right wrap" data-pose="wheel">
-    <div class="ghostword" aria-hidden="true">SCROLL</div>
     <div class="inner">
       <div class="copy">
         <p class="eyebrow">Side scroll wheel</p>
@@ -244,7 +240,6 @@ footer .inner{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap
           <legend>Keycaps and wheel <output id="capName">Lilac</output></legend>
           <div class="swatches" id="capSw"></div>
         </fieldset>
-        <div class="build">Your build: <b id="buildName">Plum body, Lilac keys</b></div>
       </div>
     </div>
   </section>
@@ -297,10 +292,9 @@ function swatches(el, list, name, onPick, split){
   });
   el.addEventListener("change", e => onPick(list.find(s=>s.id===e.target.value)));
 }
-const bodyName=document.getElementById("bodyName"), capName=document.getElementById("capName"), buildName=document.getElementById("buildName");
-function updateName(){ buildName.textContent = `${bodyName.textContent} body, ${capName.textContent} keys`; }
-swatches(document.getElementById("bodySw"), BODY, "body", s=>{ colBody=lin(s.c); bodyName.textContent=s.name; updateName(); });
-swatches(document.getElementById("capSw"), CAPS, "caps", s=>{ colSide=lin(s.side); colTop=lin(s.top); capName.textContent=s.name; updateName(); }, true);
+const bodyName=document.getElementById("bodyName"), capName=document.getElementById("capName");
+swatches(document.getElementById("bodySw"), BODY, "body", s=>{ colBody=lin(s.c); bodyName.textContent=s.name; });
+swatches(document.getElementById("capSw"), CAPS, "caps", s=>{ colSide=lin(s.side); colTop=lin(s.top); capName.textContent=s.name; }, true);
 
 /* ---------- waitlist ---------- */
 document.getElementById("wl").addEventListener("submit", e=>{
