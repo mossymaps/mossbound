@@ -427,11 +427,28 @@ function start(){
       if(name==="config"){ p.y=0.3; }
       if(name==="end"){ p.y=0.5; }           // clear of the waitlist heading
       p.x*=0.05; p.s*=Math.max(0.5, Math.min(1, asp*1.15));
+    } else {
+      // keep the model's right edge inside the nav's call to action (a little slack for the sway)
+      for(let k=0;k<2;k++){
+        const edge=rightEdge(p); if(edge<=rightLimit) break;
+        p.s*=(rightLimit-p.x)/(edge-p.x);
+      }
     }
     return p;
   }
+  let rightLimit=1;
+  function rightEdge(p){
+    const m=M4.mul(VP,modelMatrix(p,0,0)); let mx=-1e9;
+    for(let i=0;i<mesh.n;i++){
+      const x=mesh.P[i*3],y=mesh.P[i*3+1],z=mesh.P[i*3+2];
+      const cx=m[0]*x+m[4]*y+m[8]*z+m[12], cw=m[3]*x+m[7]*y+m[11]*z+m[15];
+      if(cx/cw>mx) mx=cx/cw;
+    }
+    return mx;
+  }
   function computeAnchors(){
-    const vh=innerHeight;
+    const vh=innerHeight, cta=document.querySelector(".nav .btn").getBoundingClientRect();
+    rightLimit=cta.right/W*2-1-0.01;
     frames=[];
     secs.forEach((s,i)=>{
       const r=s.getBoundingClientRect(), top=r.top+scrollY, mid=top+r.height/2-vh/2;
@@ -441,6 +458,16 @@ function start(){
       else { frames.push({y:mid-hold,p}); frames.push({y:mid+hold,p}); }
     });
     frames.push({y:1e9,p:frames[frames.length-1].p});
+  }
+  function modelMatrix(p,bob,sway){
+    const halfH=D*Math.tan(FOV/2), halfW=halfH*asp;
+    let M=M4.T(p.x*halfW,(p.y+bob)*halfH,0);
+    M=M4.mul(M,M4.Y(p.turn+sway));
+    M=M4.mul(M,M4.X(p.tilt));
+    M=M4.mul(M,M4.Z(p.spin));
+    M=M4.mul(M,M4.Y(p.roll));
+    M=M4.mul(M,M4.S(p.s));
+    return M4.mul(M,M4.T(0,-p.fo,0));
   }
   const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
   function target(y){
@@ -495,15 +522,7 @@ function start(){
     KEYS.forEach(key=>cur[key]+=(tg[key]-cur[key])*k);
     const t=now/1000, bob=reduce?0:Math.sin(t*1.1)*0.012, sway=reduce?0:Math.sin(t*0.45)*0.04;
 
-    const halfH=D*Math.tan(FOV/2), halfW=halfH*asp;
-    const wx=cur.x*halfW, wy=(cur.y+bob)*halfH;
-    let M=M4.T(wx,wy,0);
-    M=M4.mul(M,M4.Y(cur.turn+sway));
-    M=M4.mul(M,M4.X(cur.tilt));
-    M=M4.mul(M,M4.Z(cur.spin));
-    M=M4.mul(M,M4.Y(cur.roll));
-    M=M4.mul(M,M4.S(cur.s));
-    M=M4.mul(M,M4.T(0,-cur.fo,0));
+    const M=modelMatrix(cur,bob,sway);
 
     gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.uniformMatrix4fv(uM,false,M); gl.uniformMatrix4fv(uVP,false,VP);
