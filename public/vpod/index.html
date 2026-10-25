@@ -74,6 +74,14 @@ h2{font-size:clamp(34px,4.6vw,60px)}
 .hero .side{max-width:22rem}
 .hero .side p{color:var(--muted);margin:0 0 20px}
 .cue{font-family:var(--f-mono);font-size:12px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;display:flex;align-items:center;gap:10px;margin-top:22px}
+/* wider screens: one centred stack under the centred model, like the waitlist */
+@media (min-width:761px){
+  .hero .inner{flex-direction:column;align-items:center;justify-content:flex-end;gap:20px;text-align:center}
+  .hero h1{max-width:none;font-size:clamp(40px,5.4vw,76px)}
+  .hero .side{max-width:34rem}
+  .hero .side p{margin:0}
+  .cue{justify-content:center}
+}
 .cue i{display:block;width:1px;height:28px;background:var(--muted);animation:cue 1.8s ease-in-out infinite;transform-origin:top}
 @keyframes cue{0%{transform:scaleY(0)}50%{transform:scaleY(1)}100%{transform:scaleY(0);transform-origin:bottom}}
 
@@ -187,10 +195,7 @@ footer .inner{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap
   <section class="hero wrap" data-pose="hero">
     <div class="ghostword" aria-hidden="true">VIBEPOD</div>
     <div class="inner">
-      <div>
-        <p class="eyebrow">AI macro pad</p>
-        <h1>Create with AI on the go.</h1>
-      </div>
+      <h1>Create with AI on the go.</h1>
       <div class="side">
         <p>Vibepod puts all your hotkeys and a built-in microphone in one device. It's made for working professionals and students to vibe-code their projects and get tasks done with any major AI agent.</p>
         <div class="cue"><i></i>Scroll to explore</div>
@@ -340,7 +345,7 @@ const M4={
    s: scale · f: which part to center ("keys", "wheel" or none) */
 const TAU=Math.PI*2;
 const POSES={
-  hero:  {x:0.2,  y:0.36, roll:0,    spin:-1.12+Math.PI, tilt:-0.9, turn:0, s:0.86, f:0},
+  hero:  {x:0,    y:0.18, roll:0,    spin:-1.12+Math.PI, tilt:-0.9, turn:0, s:0.86, f:0},
   keys:  {x:0.52, y:0,    roll:0,    spin:-1.42, tilt:-0.62, turn:-0.1, s:1.3,  f:"keys"},
   wheel: {x:-0.4, y:0,    roll:1.2,  spin:1.57,  tilt:-0.32, turn:-0.15,s:1.6,  f:"wheel"},
   config:{x:-0.3, y:0,    roll:0,    spin:-1.0+Math.PI+TAU, tilt:-0.85, turn:0, s:1.12, f:0},
