@@ -421,28 +421,40 @@ function start(){
       if(name==="config"){ p.y=0.3; }
       if(name==="end"){ p.y=0.5; }           // clear of the waitlist heading
       p.x*=0.05; p.s*=Math.max(0.5, Math.min(1, asp*1.15));
-    } else {
-      // keep the model's right edge inside the nav's call to action (a little slack for the sway)
-      for(let k=0;k<2;k++){
-        const edge=rightEdge(p); if(edge<=rightLimit) break;
-        p.s*=(rightLimit-p.x)/(edge-p.x);
+      // whole-device views sit centred inside the page gutters; the keys and wheel views zoom past them on purpose
+      if(name==="hero" || name==="config" || name==="end"){
+        const [mn,mx]=extentX(p); p.x+=(leftLimit+rightLimit)/2-(mn+mx)/2;
+        fitX(p, leftLimit);
       }
+    } else {
+      // keep the model's right edge inside the nav's call to action
+      fitX(p, -Infinity);
     }
     return p;
   }
-  let rightLimit=1;
-  function rightEdge(p){
-    const m=M4.mul(VP,modelMatrix(p,0,0)); let mx=-1e9;
+  /* shrink the pose until its projected x extent sits within [left, rightLimit] (a little slack for the sway) */
+  let leftLimit=-1, rightLimit=1;
+  function fitX(p, left){
+    for(let k=0;k<2;k++){
+      const [mn,mx]=extentX(p);
+      const f=Math.min(1, mx>rightLimit?(rightLimit-p.x)/(mx-p.x):1, mn<left?(p.x-left)/(p.x-mn):1);
+      if(f>=1) break;
+      p.s*=f;
+    }
+  }
+  function extentX(p){
+    const m=M4.mul(VP,modelMatrix(p,0,0)); let mn=1e9, mx=-1e9;
     for(let i=0;i<mesh.n;i++){
       const x=mesh.P[i*3],y=mesh.P[i*3+1],z=mesh.P[i*3+2];
-      const cx=m[0]*x+m[4]*y+m[8]*z+m[12], cw=m[3]*x+m[7]*y+m[11]*z+m[15];
-      if(cx/cw>mx) mx=cx/cw;
+      const cx=m[0]*x+m[4]*y+m[8]*z+m[12], cw=m[3]*x+m[7]*y+m[11]*z+m[15], v=cx/cw;
+      if(v<mn) mn=v; if(v>mx) mx=v;
     }
-    return mx;
+    return [mn,mx];
   }
   function computeAnchors(){
-    const vh=innerHeight, cta=document.querySelector(".nav .btn").getBoundingClientRect();
+    const vh=innerHeight, cta=document.querySelector(".nav .btn").getBoundingClientRect(), brand=document.querySelector(".nav .brand").getBoundingClientRect();
     rightLimit=cta.right/W*2-1-0.01;
+    leftLimit=brand.left/W*2-1+0.01;
     frames=[];
     secs.forEach((s,i)=>{
       const r=s.getBoundingClientRect(), top=r.top+scrollY, mid=top+r.height/2-vh/2;
