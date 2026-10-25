@@ -1,5 +1,7 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
 <title>vibepod</title>
+<meta name="theme-color" content="#ECEAF1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#130F18" media="(prefers-color-scheme: dark)">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -22,9 +24,10 @@
   --accent:#B696E4; --accent-ink:#1B1325; --panel:rgba(28,22,35,.8); --glow:rgba(150,104,220,.2); color-scheme:dark}
 
 *{box-sizing:border-box}
-html{scroll-behavior:smooth}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;text-size-adjust:100%}
 @media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
-body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:17px;line-height:1.55;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:17px;line-height:1.55;-webkit-font-smoothing:antialiased;overflow-x:hidden;overflow-x:clip}
+button,a,label{-webkit-tap-highlight-color:transparent}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
 .wrap{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 .inner{max-width:1240px;margin:0 auto}
@@ -32,7 +35,8 @@ a{color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
 
 /* stage */
-#stage{position:fixed;inset:0;width:100%;height:100%;z-index:1;pointer-events:none;display:block}
+/* sized to the large viewport so the canvas doesn't resize as a phone's address bar shows and hides */
+#stage{position:fixed;top:0;left:0;width:100%;height:100vh;height:100lvh;z-index:1;pointer-events:none;display:block}
 .halo{position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(40vmax 34vmax at var(--hx,50%) var(--hy,52%),var(--glow),transparent 70%)}
 
 /* nav */
@@ -42,11 +46,13 @@ a{color:inherit}
 .brand b{font-family:var(--f-display);font-stretch:125%;font-weight:800;font-size:20px;letter-spacing:-.01em}
 .tag{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 9px}
 .btn{display:inline-flex;align-items:center;gap:8px;font:600 15px/1 var(--f-body);text-decoration:none;background:var(--accent);color:var(--accent-ink);border:0;border-radius:999px;padding:13px 20px;cursor:pointer;transition:transform .2s ease, filter .2s ease}
-.btn:hover{transform:translateY(-1px);filter:brightness(1.06)}
+@media (hover:hover){.btn:hover{transform:translateY(-1px);filter:brightness(1.06)}}
+.btn:active{filter:brightness(.94)}
 .btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
 
 /* shared section bits */
-section{position:relative}
+/* clip the oversized ghost words, or phones widen the layout to fit them and zoom the page out */
+section{position:relative;overflow:hidden;overflow:clip}
 .ghostword{position:absolute;z-index:0;left:50%;top:50%;transform:translate(-50%,-50%);font-family:var(--f-display);font-stretch:125%;font-weight:900;font-size:clamp(90px,24vw,380px);line-height:.8;letter-spacing:-.04em;color:var(--ghost);white-space:nowrap;pointer-events:none;user-select:none}
 .copy{position:relative;z-index:2;max-width:25rem}
 .eyebrow{font-family:var(--f-mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin:0 0 14px}
@@ -129,19 +135,43 @@ footer .inner{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap
 @media (max-width:760px){
   body{font-size:16px}
   .nav .tag{display:none}
-  .hero{min-height:max(118vh,760px)}
+  .nav .inner{padding-block:12px}
+  .nav .btn{font-size:14px;padding:11px 16px}
+  /* svh: the smallest viewport, so content isn't hidden under a phone's address bar */
+  .hero{min-height:max(118vh,760px);min-height:max(118svh,760px)}
   .hero .inner{padding-block:0 32px}
-  .feature{min-height:120vh;align-items:end}
-  .feature .inner, .feature.right .inner{justify-content:flex-start;padding-bottom:9vh}
+  .hero .side{max-width:none}
+  .feature{min-height:120vh;min-height:120svh;align-items:end}
+  .feature .inner, .feature.right .inner{justify-content:flex-start;padding-bottom:9vh;padding-bottom:9svh}
   .copy{background:var(--panel);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:18px;padding:20px;max-width:none;width:100%}
   .copy.bare{background:none;border:0;padding:0;backdrop-filter:none;-webkit-backdrop-filter:none}
   .app{width:100%}
   .config{min-height:auto;padding-block:8vh}
   .config .inner{grid-template-columns:1fr}
-  .modelzone{height:46vh}
-  .waitlist{min-height:100vh}
+  .modelzone{height:46vh;height:46svh}
+  .panel{padding:20px}
+  .waitlist{min-height:100vh;min-height:100svh}
+  .waitlist .inner{padding-bottom:max(12svh,env(safe-area-inset-bottom,0px))}
+  form{flex-direction:column;align-items:stretch;max-width:24rem;margin-inline:auto}
+  input[type=email]{width:100%}
+  form .btn{justify-content:center}
+  footer .inner{padding-bottom:max(22px,env(safe-area-inset-bottom,0px))}
+}
+/* phones held sideways: too short for the model and the hero copy on one screen, so the copy starts below it */
+@media (max-height:500px) and (orientation:landscape){
+  .nav .inner{padding-block:10px}
+  .hero{min-height:160vh;min-height:160svh}
+  .hero .inner{padding-block:0 28px}
+  .feature{min-height:150vh}
+  .modelzone{height:80vh}
+}
+@media (max-width:360px){
+  .nav .btn{padding:10px 13px;font-size:13px}
+  .swatches{gap:12px}
 }
 </style>
+</head>
+<body>
 
 <canvas id="stage" aria-label="Rotating 3D model of the Vibepod macro pad" role="img"></canvas>
 <div class="halo" id="halo"></div>
@@ -367,6 +397,8 @@ function start(){
   let W=0,H=0,asp=1,VP;
   function resize(){
     const dpr=Math.min(window.devicePixelRatio||1,2);
+    // phones fire resize as the address bar moves; only rebuild the canvas when its size really changes
+    if(cv.clientWidth===W && cv.clientHeight===H && cv.width===Math.round(W*dpr)){ computeAnchors(); return; }
     W=cv.clientWidth;H=cv.clientHeight;asp=W/H;cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);
     gl.viewport(0,0,cv.width,cv.height);
     VP=M4.mul(M4.persp(FOV,asp,.1,50),M4.T(0,0,-D));
@@ -383,6 +415,7 @@ function start(){
       if(name!=="hero" && name!=="config" && name!=="end"){ p.y=0.36; }
       if(name==="hero"){ p.y=0.48; p.s*=0.95; }
       if(name==="config"){ p.y=0.3; }
+      if(name==="end"){ p.y=0.5; }           // clear of the waitlist heading
       p.x*=0.05; p.s*=Math.max(0.5, Math.min(1, asp*1.15));
     }
     return p;
